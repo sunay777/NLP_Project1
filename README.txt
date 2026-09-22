@@ -35,6 +35,21 @@ strength ~0.95 within ~750 steps. Expected console tail:
 steps to converge.
 
 ------------------------------------------------------------------
+Milestone 1b — figures for the write-up (training curves, attention maps,
+embeddings)
+------------------------------------------------------------------
+python -m experiments.analyze_single --mode base
+
+Trains one generation and saves everything the report needs into
+results/single_<mode>/:
+  history.json         raw per-step metrics + which heads were identified
+  training_curves.png  train loss / validation query accuracy / induction score
+  attention_maps.png   every head's attention pattern on one example sequence
+  embeddings.png        symbol cosine-similarity matrix + PCA of token embeddings
+  model.pt              trained weights (so figures can be regenerated without
+                         retraining)
+
+------------------------------------------------------------------
 Milestone 2 — the collapse sweep (Options A + C)
 ------------------------------------------------------------------
 python -m experiments.run_collapse \
