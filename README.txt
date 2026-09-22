@@ -32,7 +32,7 @@ strength ~0.95 within ~750 steps. Expected console tail:
     induction head:      layer 1 head 2  score~0.95
 
 --mode extended is harder (it also predicts a free next symbol) and needs more
-steps to converge.
+steps to converge (verified: see "Extended-mode convergence" below).
 
 ------------------------------------------------------------------
 Milestone 1b — figures for the write-up (training curves, attention maps,
@@ -54,10 +54,37 @@ Milestone 2 — the collapse sweep (Options A + C)
 ------------------------------------------------------------------
 python -m experiments.run_collapse \
     --mode extended --generations 6 \
-    --fractions 0.0 0.1 0.25 0.5 1.0 --seeds 0 1 2 --steps 4000
+    --fractions 0.0 0.1 0.25 0.5 1.0 --seeds 0 1 2 --steps 6000
 
 Results stream to results/collapse.json (checkpointed after every run). Run the
 same sweep with --mode base as the control (expected to stay stable).
+
+NOTE: --steps was raised from 4000 to 6000 after verifying extended mode's
+actual convergence point (see below) — 4000 is close enough to the transition
+that an unlucky seed could land a generation just before it snaps in, which
+would misread as "collapse" when it is really just undertraining.
+
+------------------------------------------------------------------
+Extended-mode convergence and its loss floor (verified empirically)
+------------------------------------------------------------------
+Ran with default settings, --steps 12000:
+  base:     phase transition ~step 500;  final query_acc 1.000, induction ~0.95
+  extended: phase transition ~step 3000 (6x later); final query_acc 1.000,
+            induction ~0.96, but TRAIN LOSS PLATEAUS AT ~0.23, not ~0.
+
+Why the loss floor is real, not a bug: in extended mode one supervised target
+(sq2, the "free next symbol") is sampled independently of context
+(rng.integers in src/data.py) -- it is genuinely unpredictable, so even a
+perfect model cannot drive its loss below log(n_pairs). With n_pairs=4 that is
+log(4)=1.386, diluted across the 6 supervised positions per sequence
+(4 query labels + sq2 + lq2) gives an expected floor of 1.386/6 = 0.231 --
+matching the observed ~0.23-0.24 almost exactly. Cite this floor rather than
+treating extended-mode loss as directly comparable to base-mode loss.
+
+Practical implication for the collapse sweep: give extended-mode runs at
+least ~4000-6000 steps per generation (not the 1500-step CLI default) or
+early generations will be read as "collapsed" when they are actually just
+short of the phase transition.
 
 ------------------------------------------------------------------
 What makes the induction circuit form (important design findings)
