@@ -106,10 +106,11 @@ def conditional_diversity(model, batch, cfg):
     }
 
 
-def slot_stats(sampled_sym, idx, K):
-    """Which study slot each sampled sq2 came from; entropy over slots / ln K."""
+def slot_stats(sampled_sym, idx, K, block="study"):
+    """Which slot of the study (or query) block each sampled sq2 came from;
+    entropy over slots / ln K. block='query' tests a query-order (recency) bias."""
     sym = torch.as_tensor(sampled_sym).to(idx.device)
-    study = idx[:, 0:2 * K:2]
+    study = idx[:, 0:2 * K:2] if block == "study" else idx[:, 2 * K:4 * K:2]
     hit = study == sym[:, None]                                         # (B,K)
     in_ctx = hit.any(1)
     slot = hit.float().argmax(1)[in_ctx].cpu().numpy()
