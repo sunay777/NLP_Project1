@@ -105,6 +105,7 @@ def _record(g, model, cfg, eval_rng, device, eval_batch, extra):
         gp = 4 * cfg.n_pairs - 1
         sym = gen["targets"][:, gp]
         rec["slot"] = metrics.slot_stats(sym, gen["idx"], cfg.n_pairs)
+        rec["qslot"] = metrics.slot_stats(sym, gen["idx"], cfg.n_pairs, block="query")
         rec["diversity"] = metrics.distribution_stats(sym.cpu().numpy(), cfg.n_symbols)
         rec["kl_uniform"] = metrics.kl_to_uniform(sym.cpu().numpy(), cfg.n_symbols)
     rec.update(extra)
@@ -143,7 +144,7 @@ def _train_gated(cfg, seed, g, train_sampler, val_batch, probe_batch, label_ok,
 
 def run_collapse(cfg, n_generations, real_fraction, seed, pool_size=20000,
                  temperature=1.0, gen_queries="first", gate=0.9, real_gate=0.9,
-                 max_retries=3, verbose=False):
+                 max_retries=3, verbose=False, save_prefix=None):
     device = resolve_device(cfg.device)
     cfg = dataclasses.replace(cfg, device=device)
     rng = np.random.default_rng(seed)                     # pools + generation
@@ -160,6 +161,8 @@ def run_collapse(cfg, n_generations, real_fraction, seed, pool_size=20000,
                        {**info, "pool_label_correct": 1.0, "synthetic_fraction": 0.0})]
     if verbose:
         _print(records[-1])
+    if save_prefix:
+        torch.save(model.state_dict(), f"{save_prefix}_gen0.pt")
 
     for g in range(1, n_generations):
         total = pool_size + n_val
@@ -188,6 +191,8 @@ def run_collapse(cfg, n_generations, real_fraction, seed, pool_size=20000,
         records.append(rec)
         if verbose:
             _print(rec)
+    if save_prefix and n_generations > 1:
+        torch.save(model.state_dict(), f"{save_prefix}_gen{n_generations - 1}.pt")
     return records
 
 

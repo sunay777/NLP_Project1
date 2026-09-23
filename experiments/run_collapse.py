@@ -32,6 +32,8 @@ def main():
     ap.add_argument("--eval_every", type=int, default=500)
     ap.add_argument("--threads", type=int, default=0, help="torch threads (0 = default)")
     ap.add_argument("--out", default="results/collapse.json")
+    ap.add_argument("--save_models", action="store_true",
+                    help="save gen-0 and final-gen weights next to --out")
     args = ap.parse_args()
 
     if args.threads:
@@ -57,7 +59,9 @@ def main():
                                    temperature=args.temperature,
                                    gen_queries=args.gen_queries,
                                    gate=args.gate, max_retries=args.max_retries,
-                                   verbose=True)
+                                   verbose=True,
+                                   save_prefix=(f"{os.path.splitext(args.out)[0]}_rf{frac:g}_s{seed}"
+                                                if args.save_models else None))
             all_runs.append({"real_fraction": frac, "seed": seed, "records": records})
             with open(args.out, "w") as f:
                 json.dump({"config": vars(args), "runs": all_runs}, f, indent=1)
