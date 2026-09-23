@@ -74,6 +74,16 @@ def load(path):
     return d["config"], d["runs"]
 
 
+def load_many(paths):
+    runs, seen = [], set()
+    for p in paths:
+        for r in load(p)[1]:
+            k = (r["real_fraction"], r["seed"])
+            if k not in seen:                      # first file wins on duplicates
+                seen.add(k); runs.append(r)
+    return runs
+
+
 def table(runs, metric):
     """-> fractions (sorted), array (n_frac, n_seed, n_gen), converged mask."""
     fn = METRICS[metric][1]
@@ -188,16 +198,17 @@ def trajectories(panels, out):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--extended", required=True)
-    ap.add_argument("--base", default=None)
+    ap.add_argument("--extended", nargs="+", required=True,
+                    help="one or more run_collapse JSONs (runs are concatenated)")
+    ap.add_argument("--base", nargs="+", default=None)
     ap.add_argument("--out", default="results/figures")
     ap.add_argument("--last_k", type=int, default=1,
                     help="average the last k generations for the dose-response")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     style()
-    _, ext = load(a.extended)
-    base = load(a.base)[1] if a.base else []
+    ext = load_many(a.extended)
+    base = load_many(a.base) if a.base else []
 
     rows = dose_response(ext, base, a.out, a.last_k)
     panels = [(ext, "cond_diversity", "Extended: conditional diversity"),
