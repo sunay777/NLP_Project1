@@ -37,6 +37,9 @@ def train_model(cfg, sampler, val_sampler=None, probe_batch=None, log=True):
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
     rng = np.random.default_rng(cfg.seed)
+    # evaluation draws from its OWN stream, so changing eval_every / val settings
+    # never changes the training data order (previously they shared `rng`).
+    eval_rng = np.random.default_rng(cfg.seed + 7_777_777)
 
     model = InductionTransformer(cfg).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
@@ -55,7 +58,7 @@ def train_model(cfg, sampler, val_sampler=None, probe_batch=None, log=True):
         sched.step()
 
         if step % cfg.eval_every == 0 or step == cfg.steps - 1:
-            vb = val_sampler(cfg.eval_batch, rng, device) if val_sampler else batch
+            vb = val_sampler(cfg.eval_batch, eval_rng, device) if val_sampler else batch
             rec = {
                 "step": step,
                 "train_loss": float(loss.item()),
