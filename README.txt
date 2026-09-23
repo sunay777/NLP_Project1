@@ -183,6 +183,23 @@ Findings:
     each, 0 final gate failures.
 
 ------------------------------------------------------------------
+Hyper-parameter selection (train / validation / test)
+------------------------------------------------------------------
+python -m experiments.tune_hparams --mode base --steps 4000 --seeds 0 1 --out results/tuning_base.json
+python -m experiments.tune_hparams --mode extended --steps 6000 --seeds 0 1 --out results/tuning_extended.json
+Grid: lr {3e-4,1e-3,3e-3} x warmup {100,200} x d_model {32,64}; select by
+validation loss; evaluate the selection once on a disjoint test split (seed 99).
+  base:     selects the defaults (lr 1e-3, warmup 200, d_model 64); test acc 1.000.
+            No d_model=32 config formed induction within 4000 steps.
+  extended: every d_model=64, lr>=1e-3 config reaches the ln K/(K+2)=0.231 floor
+            within 0.004, so they are indistinguishable at 2 seeds. The
+            top-ranked one (lr 3e-3, warmup 100) FAILED to transition on the test
+            seed (acc 0.63). The defaults used in the sweep passed (test loss
+            0.2348, acc 1.000; results/tuning_extended_default_test.json).
+            Validation loss cannot rank configs whose main failure mode is a
+            stochastic non-transition, hence the convergence gate.
+
+------------------------------------------------------------------
 What makes the induction circuit form (important design findings)
 ------------------------------------------------------------------
 Getting a CLEAN, content-based induction head (not a positional or direct-match
