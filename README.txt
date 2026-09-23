@@ -130,6 +130,59 @@ attention probes over all K queries plus zero-ablation of heads.
     (src/probes.circuit_probe) scores both variants and reports a causal drop.
 
 ------------------------------------------------------------------
+Results of the A+C sweep (verified; regenerate with the commands below)
+------------------------------------------------------------------
+Setup: --gen_queries all, 6 generations, 3 seeds, pool 20k (+10% val),
+extended 6000 steps/gen, base 4000 steps/gen, T=1.0.
+  python -m experiments.run_collapse --mode extended --gen_queries all \
+      --fractions 0.0 1.0 0.25 0.1 0.5 --seeds 0 1 2 --steps 6000 --save_models \
+      --out results/sweep/extended_all.json
+  python -m experiments.run_collapse --mode base --gen_queries all \
+      --fractions 0.0 1.0 0.25 0.1 0.5 --seeds 0 1 2 --steps 4000 --save_models \
+      --out results/sweep/base_all.json
+  python -m experiments.plot_collapse --extended results/sweep/extended_all*.json \
+      --base results/sweep/base_all.json --out results/figures
+  python -m experiments.summarise_sweep --files results/sweep/extended_all*.json
+  python -m experiments.reprobe_saved --glob "results/sweep/extended_all*_gen*.pt" \
+      --mode extended --out results/figures/reprobe_extended.csv
+(The rf=0.5 extended runs were executed as a separate process into
+extended_all_rf05.json; the plotting/summary scripts merge files.)
+
+Extended, final generation (mean +/- sd over 3 seeds); gen 0: cond. div 0.994,
+off-context 0.012:
+  real_fraction  cond. diversity  off-context mass  induction  query acc
+  0.0            0.819 +/- 0.022  0.052 +/- 0.005   0.959      1.000
+  0.1            0.858 +/- 0.018  0.044 +/- 0.003   0.965      1.000
+  0.25           0.861 +/- 0.026  0.031 +/- 0.003   0.969      1.000
+  0.5            0.898 +/- 0.032  0.022 +/- 0.003   0.955      1.000
+  1.0 (control)  0.897 +/- 0.018  0.012 +/- 0.001   0.938      1.000
+Marginal symbol diversity stays 1.000-1.009 at EVERY fraction (blind).
+Base control: query acc >= 0.997 and >= 98% of synthetic labels correct at all
+fractions; induction 0.84-0.96 with no trend in real_fraction.
+
+Findings:
+  * Graded, monotone dose-response; no sharp critical fraction. Off-context mass
+    (probability on symbols NOT in the context) accumulates roughly linearly per
+    generation on self-generated data and is flat at real_fraction=1.
+  * Finite-data confound: even real_fraction=1 drops conditional diversity from
+    0.994 (gen 0, unlimited fresh data) to ~0.90 (finite 20k pool, ~77 epochs).
+    The recursive effect is the gap to that control, not the drop from gen 0.
+    (--gen0_pool removes the confound in future runs.)
+  * Dissociation: the induction circuit is intact at every fraction. Re-probing
+    all 30 saved final-generation models: all canonical, accuracy >= 0.999, and
+    ablating layer 1 costs 0.74-1.00 (extended) / 0.61-0.93 (base) accuracy.
+  * Circuit multiplicity: fresh models pick among THREE algorithms:
+    canonical (copy the matching label), shifted (copy it via the next token),
+    and ELIMINATION (layer-1 heads attend AWAY from the match and suppress the
+    non-matching labels, OV label-copy score -15.8; ablate all L1 -> 0.40).
+    10/90 extended and 6/90 base generations used a non-canonical variant, and
+    the legacy single-head probe reported a false 'circuit collapse' in 9 and 6
+    of them (the extended gen-1 dip in fig_trajectories is seed 2's init, which
+    is shared across fractions and lands on the elimination variant).
+  * Convergence gate: 6 (extended) and 9 (base) retries over 90 generations
+    each, 0 final gate failures.
+
+------------------------------------------------------------------
 What makes the induction circuit form (important design findings)
 ------------------------------------------------------------------
 Getting a CLEAN, content-based induction head (not a positional or direct-match
@@ -163,6 +216,10 @@ src/metrics.py    accuracy, perplexity, marginal + CONDITIONAL diversity
 experiments/verify_circuit.py  per-head probes/ablations for a saved model
 experiments/check_extended.py  convergence timing + loss-floor check
 experiments/plot_collapse.py   headline A+C figures
+experiments/plot_circuit.py    circuit figure (L0 routes, L1 attention, ablations)
+experiments/summarise_sweep.py numbers for the write-up, from the sweep JSONs
+experiments/reprobe_saved.py   re-probe saved gen-0/final models
+experiments/tune_hparams.py    validation-based hyper-parameter selection + test
 experiments/      runnable entry points
 
 ------------------------------------------------------------------
