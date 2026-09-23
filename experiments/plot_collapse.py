@@ -30,6 +30,14 @@ import numpy as np
 # validated palettes (dataviz reference instance, light mode)
 SERIES = {"diversity": "#2a78d6", "induction": "#eb6834", "control": "#1baf7a"}
 ORDINAL = ["#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281"]   # light -> dark
+CANON_FRACS = [0.0, 0.1, 0.25, 0.5, 1.0]   # fixed value->colour map (colour follows value)
+
+
+def frac_color(f, all_fracs):
+    ref = CANON_FRACS if set(all_fracs) <= set(CANON_FRACS) else sorted(all_fracs)
+    if len(ref) <= len(ORDINAL):
+        return ORDINAL[len(ORDINAL) - len(ref) + ref.index(f)]
+    return plt.cm.Blues(0.35 + 0.6 * ref.index(f) / (len(ref) - 1))
 INK, INK2, GRID = "#0b0b0b", "#52514e", "#e6e5e1"
 
 METRICS = {
@@ -41,6 +49,8 @@ METRICS = {
                        lambda r: r["circuit"]["induction_best"]),
     "causal_drop": ("Causal drop (acc lost when induction heads ablated)",
                     lambda r: r["circuit"]["causal_drop"]),
+    "off_context": ("Off-context mass of sq2 (hallucinated symbols)",
+                    lambda r: r["cond_diversity"]["off_context"]),
     "query_acc_all": ("Query accuracy on real data (all K)",
                       lambda r: r["query_acc_all"]),
     "pool_label_correct": ("Fraction of training-pool query labels correct",
@@ -88,31 +98,57 @@ def final_stats(arr, last_k=1):
     return np.nanmean(v, axis=1), np.nanstd(v, axis=1), v
 
 
+def _band(ax, x, m, s, color, mk, ls, name):
+    ax.fill_between(x, m - s, m + s, color=color, alpha=0.15, linewidth=0)
+    ax.plot(x, m, ls, marker=mk, color=color, label=name,
+            markeredgecolor="white", markeredgewidth=1)
+
+
 def dose_response(ext_runs, base_runs, out, last_k):
-    fig, ax = plt.subplots(figsize=(5.2, 3.4))
-    specs = [("cond_diversity", ext_runs, "diversity", "o", "-", "Extended: diversity"),
-             ("induction_best", ext_runs, "induction", "s", "-", "Extended: induction"),
+    """(a) diversity + induction on a shared [0,1] axis; (b) off-context mass on
+    its own axis (different scale -> separate panel, never a twin axis)."""
+    fig, (ax, bx) = plt.subplots(1, 2, figsize=(8.4, 3.3),
+                                 gridspec_kw={"width_ratios": [1.5, 1]})
+    specs = [("cond_diversity", ext_runs, "diversity", "o", "-", "Extended: conditional diversity"),
+             ("induction_best", ext_runs, "induction", "s", "-", "Extended: induction strength"),
              ("induction_best", base_runs, "control", "^", "--", "Base: induction (control)")]
     rows = []
+    fracs = sorted({r["real_fraction"] for r in ext_runs + base_runs})
+    X = lambda fs: np.array([fracs.index(f) for f in fs])   # shared x positions
     for metric, runs, key, mk, ls, name in specs:
         if not runs:
             continue
-        fracs, _, arr, _ = table(runs, metric)
+        fr, _, arr, _ = table(runs, metric)
         m, s, per_seed = final_stats(arr, last_k)
-        x = np.arange(len(fracs))
-        ax.fill_between(x, m - s, m + s, color=SERIES[key], alpha=0.15, linewidth=0)
-        ax.plot(x, m, ls, marker=mk, color=SERIES[key], label=name,
-                markeredgecolor="white", markeredgewidth=1)
-        for f, mm, ss, ps in zip(fracs, m, s, per_seed):
+        _band(ax, X(fr), m, s, SERIES[key], mk, ls, name)
+        for f, mm, ss, ps in zip(fr, m, s, per_seed):
             rows.append([name, f, round(mm, 4), round(ss, 4), len(ps)])
-    ax.set_xticks(np.arange(len(fracs)))
-    ax.set_xticklabels([f"{f:g}" for f in fracs])
-    ax.set_xlabel("Real-data fraction per generation (evenly spaced)")
-    ax.set_ylabel(f"Value at final generation{'' if last_k == 1 else f' (mean of last {last_k})'}")
+    # gen-0 reference: diversity before any finite-pool / recursive training
+    _, _, arr0, _ = table(ext_runs, "cond_diversity")
+    ax.axhline(np.nanmean(arr0[:, :, 0]), color=INK2, ls=":", lw=1)
+    ax.text(0, np.nanmean(arr0[:, :, 0]) + 0.015, "gen 0 (fresh data)", fontsize=7, color=INK2)
+
+    fracs_o, _, arro, _ = table(ext_runs, "off_context")
+    m, s, per_seed = final_stats(arro, last_k)
+    _band(bx, X(fracs_o), m, s, SERIES["diversity"], "D", "-",
+          "Extended: off-context mass")
+    for f, mm, ss, ps in zip(fracs_o, m, s, per_seed):
+        rows.append(["Extended: off-context mass", f, round(mm, 4), round(ss, 4), len(ps)])
+    bx.axhline(np.nanmean(arro[:, :, 0]), color=INK2, ls=":", lw=1)
+    bx.set_ylim(0, max(0.02, float(np.nanmax(m + s)) * 1.25))
+
+    ylab = f"Value at final generation{'' if last_k == 1 else f' (mean of last {last_k})'}"
+    for axx in (ax, bx):
+        axx.set_xticks(np.arange(len(fracs)))
+        axx.set_xticklabels([f"{v:g}" for v in fracs])
+        axx.set_xlim(-0.3, len(fracs) - 0.7)
+        axx.set_xlabel("Real-data fraction per generation")
+    ax.set_ylabel(ylab)
     ax.set_ylim(0, 1.05)
-    ax.set_xlim(-0.3, len(fracs) - 0.7)
-    ax.set_title("Collapse dose-response: diversity vs. induction circuit")
-    ax.legend(loc="lower left", fontsize=7.5)
+    ax.set_title("(a) Diversity vs. induction circuit")
+    bx.set_title("(b) Probability mass outside the context")
+    bx.set_ylabel("off-context mass")
+    ax.legend(loc="lower right", fontsize=7)
     fig.tight_layout()
     fig.savefig(os.path.join(out, "fig_dose_response.png"), dpi=200)
     plt.close(fig)
@@ -121,24 +157,27 @@ def dose_response(ext_runs, base_runs, out, last_k):
 
 def trajectories(panels, out):
     fig, axes = plt.subplots(1, len(panels), figsize=(3.3 * len(panels), 3.0),
-                             squeeze=False, sharey=True)
+                             squeeze=False)
     for ax, (runs, metric, title) in zip(axes[0], panels):
         fracs, _, arr, conv = table(runs, metric)
-        cols = ORDINAL[-len(fracs):] if len(fracs) <= len(ORDINAL) else \
-            plt.cm.Blues(np.linspace(0.35, 0.95, len(fracs)))
         g = np.arange(arr.shape[2])
         for i, f in enumerate(fracs):
             m, s = np.nanmean(arr[i], 0), np.nanstd(arr[i], 0)
-            ax.fill_between(g, m - s, m + s, color=cols[i], alpha=0.12, linewidth=0)
-            ax.plot(g, m, marker="o", markersize=4, color=cols[i], label=f"{f:g}")
+            c = frac_color(f, fracs)
+            ax.fill_between(g, m - s, m + s, color=c, alpha=0.12, linewidth=0)
+            ax.plot(g, m, marker="o", markersize=4, color=c, label=f"{f:g}")
             bad = ~conv[i].all(0)                          # any seed failed the gate
             if bad.any():
                 ax.plot(g[bad], m[bad], "x", color=INK, markersize=6, zorder=5)
         ax.set_title(title)
         ax.set_xlabel("Generation")
         ax.set_xticks(g)
-        ax.set_ylim(0, 1.05)
-    axes[0][0].set_ylabel("Normalised value")
+        if metric != "off_context":
+            ax.set_ylim(0, 1.05)
+        else:
+            ax.set_ylim(0, None)
+    for ax, (_, metric, _) in zip(axes[0], panels):
+        ax.set_ylabel("mass" if metric == "off_context" else "normalised value")
     axes[0][-1].plot([], [], "x", color=INK, label="gate failed (any seed)")
     axes[0][-1].legend(title="real fraction", fontsize=7, title_fontsize=7,
                        loc="lower left")
@@ -163,6 +202,7 @@ def main():
     rows = dose_response(ext, base, a.out, a.last_k)
     panels = [(ext, "cond_diversity", "Extended: conditional diversity"),
               (ext, "induction_best", "Extended: induction strength")]
+    panels.append((ext, "off_context", "Extended: off-context mass"))
     if base:
         panels.append((base, "induction_best", "Base: induction (control)"))
     trajectories(panels, a.out)

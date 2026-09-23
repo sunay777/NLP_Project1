@@ -16,6 +16,11 @@ answer slots autoregressively (each sample conditions the next):
     gen_queries="all"    all K query labels are model-generated (fully recursive)
     extended mode additionally generates sq2 and lq2 in both settings.
 
+Finite-data confound: by default gen 0 sees unlimited fresh data while every
+later generation trains on a fixed pool, so even real_fraction=1.0 sharpens the
+free sq2 choice between gen 0 and gen 1. Compare against the real_fraction=1.0
+control, or pass gen0_pool=True to give gen 0 the same finite budget.
+
 Reliability safeguards (a failed optimisation must not be read as collapse):
   * pool split 90/10 into train / validation; the test set is fresh real data;
   * convergence gate: a generation is 'converged' if its validation accuracy on
@@ -144,7 +149,7 @@ def _train_gated(cfg, seed, g, train_sampler, val_batch, probe_batch, label_ok,
 
 def run_collapse(cfg, n_generations, real_fraction, seed, pool_size=20000,
                  temperature=1.0, gen_queries="first", gate=0.9, real_gate=0.9,
-                 max_retries=3, verbose=False, save_prefix=None):
+                 max_retries=3, verbose=False, save_prefix=None, gen0_pool=False):
     device = resolve_device(cfg.device)
     cfg = dataclasses.replace(cfg, device=device)
     rng = np.random.default_rng(seed)                     # pools + generation
@@ -152,8 +157,14 @@ def run_collapse(cfg, n_generations, real_fraction, seed, pool_size=20000,
     probe_batch = datamod.make_batch(cfg, cfg.eval_batch, eval_rng, device)
     n_val = max(512, pool_size // 10)
 
-    # generation 0: infinite fresh real data; gate on a held-out real batch
-    real_sampler = lambda bs, r, dev: datamod.make_batch(cfg, bs, r, dev)
+    # generation 0: fresh real data every step (default), or -- with gen0_pool --
+    # a FIXED real pool of the same size later generations get, so the gen-0 ->
+    # gen-1 change is not confounded by the switch from unlimited to finite data.
+    if gen0_pool:
+        pool0 = TensorDataset(_real(cfg, pool_size, rng, device))
+        real_sampler = lambda bs, r, dev: pool0.sample(bs, r)
+    else:
+        real_sampler = lambda bs, r, dev: datamod.make_batch(cfg, bs, r, dev)
     val0 = _real(cfg, n_val, eval_rng, device)
     model, info = _train_gated(cfg, seed, 0, real_sampler, val0, probe_batch,
                                None, gate, max_retries, real_gate)
