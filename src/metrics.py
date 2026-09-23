@@ -72,3 +72,54 @@ def kl_to_uniform(symbol_ids, n_symbols):
     u = np.ones(size) / size
     mask = p > 0
     return float((p[mask] * np.log(p[mask] / u[mask])).sum())
+
+
+# --------------------------------------------------------------------------- #
+# Conditional (per-context) diversity — the collapse signal that matters.
+#
+# sq2 is always one of the K in-context symbols, and those are a uniform draw
+# from n_symbols, so the MARGINAL histogram over symbol ids stays ~uniform even
+# if the model always picks, e.g., the first study slot. Collapse of the free
+# choice therefore has to be measured per context:
+#   cond_entropy  mean_b H(p(sq2 | context_b) renormalised over the K in-context
+#                 symbols) / ln K         (1 = uniform choice, 0 = deterministic)
+#   off_context   probability mass the model puts OUTSIDE the K in-context
+#                 symbols (hallucinated symbols or label tokens)
+#   slot_entropy  entropy of WHICH study slot the sampled sq2 came from, / ln K
+#                 (detects positional bias, e.g. 'always copy the first pair')
+# --------------------------------------------------------------------------- #
+@torch.no_grad()
+def conditional_diversity(model, batch, cfg):
+    K = cfg.n_pairs
+    model.eval()
+    logits = model(batch["idx"])
+    p = torch.softmax(logits[:, 4 * K - 1], dim=-1)                     # (B,V)
+    classes = batch["idx"][:, 0:2 * K:2]                                # study symbols (B,K)
+    in_ctx = p.gather(1, classes)                                       # (B,K)
+    mass = in_ctx.sum(1)
+    q = (in_ctx / mass[:, None]).clamp_min(1e-12)
+    H = -(q * q.log()).sum(1)
+    return {
+        "cond_entropy": (H.mean() / math.log(K)).item(),
+        "cond_entropy_p10": (torch.quantile(H, 0.10) / math.log(K)).item(),
+        "off_context": (1 - mass).mean().item(),
+    }
+
+
+def slot_stats(sampled_sym, idx, K):
+    """Which study slot each sampled sq2 came from; entropy over slots / ln K."""
+    sym = torch.as_tensor(sampled_sym).to(idx.device)
+    study = idx[:, 0:2 * K:2]
+    hit = study == sym[:, None]                                         # (B,K)
+    in_ctx = hit.any(1)
+    slot = hit.float().argmax(1)[in_ctx].cpu().numpy()
+    counts = np.bincount(slot, minlength=K).astype(np.float64)
+    if counts.sum() == 0:
+        return {"slot_entropy": 0.0, "off_context_rate": 1.0, "slot_hist": counts.tolist()}
+    pp = counts / counts.sum()
+    nz = pp[pp > 0]
+    return {
+        "slot_entropy": float(-(nz * np.log(nz)).sum() / math.log(K)),
+        "off_context_rate": float(1 - in_ctx.float().mean().item()),
+        "slot_hist": (counts / counts.sum()).tolist(),
+    }
