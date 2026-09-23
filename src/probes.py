@@ -27,6 +27,19 @@ Robust circuit probe (circuit_probe), computed over ALL K query positions:
     ablation_acc     query-label accuracy with the induction set zero-ablated
     causal_drop      unablated accuracy - ablation_acc           (causal evidence)
 
+  Variant-agnostic scalars (added after finding a third, ELIMINATION circuit):
+    ablate_L1_acc    accuracy with ALL final-layer heads zero-ablated
+    causal_drop_L1   query_acc_all - ablate_L1_acc  (dependence on layer-1
+                     attention whatever algorithm it implements)
+    per-head ov_copy direct label->label OV effect (diag - off-diag of
+                     W_U W_O W_V LN(W_E) on label tokens): > 0 copies what the
+                     head attends to, < 0 suppresses it.
+  Elimination variant (extended, init 2010): L1 heads attend AWAY from the
+  match (0.07 vs 0.17 on each non-matching label) with a strongly negative
+  ov_copy (-15.8), i.e. they suppress the non-matching labels. Neither the
+  canonical nor the shifted attention pattern is present, yet accuracy ~1.0
+  and ablating all of L1 -> 0.40. circuit_type='elimination' marks it.
+
 Why: base-mode models spread induction over 3 heads (single-head ablation costs
 <4% accuracy), and some extended seeds use the shifted pattern, so a single-head
 canonical score can report 'no circuit' for a model that is solving the task.
@@ -159,11 +172,24 @@ def circuit_probe(model, batch, cfg, set_threshold=0.35):
     prev_lab = a0[:, :, lab_t, lab_t - 1].mean(dim=(0, 2))          # (H,)
     prev2_sym = a0[:, :, sym_t, sym_t - 2].mean(dim=(0, 2))         # (H,)
 
+    hk = ablate_heads(model, cfg, [(last, h) for h in range(len(per_head))])
+    abl_l1 = query_label_accuracy(model, batch, cfg)
+    for x in hk:
+        x.remove()
+    ov = ov_copy_scores(model, cfg)[last]
+    for r in per_head:
+        r["ov_copy"] = ov[r["head"]]
+    ctype = "canonical" if best["canonical"] >= best["shifted"] else "shifted"
+    if best["copy"] < set_threshold and min(ov) < -1.0 and acc - abl_l1 > 0.3:
+        ctype = "elimination"
+
     return {
         "induction_legacy": induction_strength(model, batch, cfg),
         "induction_best": best["copy"],
         "induction_mass": sum(r["copy"] for r in per_head) / len(per_head),
-        "circuit_type": "canonical" if best["canonical"] >= best["shifted"] else "shifted",
+        "circuit_type": ctype,
+        "ablate_L1_acc": abl_l1,
+        "causal_drop_L1": acc - abl_l1,
         "induction_set": [h for _, h in induction_set],
         "query_acc_all": acc,
         "ablation_acc": abl,
@@ -172,3 +198,26 @@ def circuit_probe(model, batch, cfg, set_threshold=0.35):
         "prev2_token_best": prev2_sym.max().item(),
         "per_head": per_head,
     }
+
+
+@torch.no_grad()
+def ov_copy_scores(model, cfg):
+    """Per (layer, head): mean diagonal minus mean off-diagonal of the direct
+    label->label OV map W_U W_O W_V LN(W_E) (no final LN). >0 = copy, <0 = suppress."""
+    d = cfg.d_model
+    dh = d // cfg.n_heads
+    E = model.tok.weight
+    lab = E[cfg.n_symbols:]
+    out = []
+    for blk in model.blocks:
+        Wv = blk.attn.qkv.weight[2 * d:3 * d]
+        Wo = blk.attn.proj.weight
+        x = blk.ln1(lab)
+        row = []
+        for h in range(cfg.n_heads):
+            o = (x @ Wv[h * dh:(h + 1) * dh].T) @ Wo[:, h * dh:(h + 1) * dh].T
+            M = (o @ E.T)[:, cfg.n_symbols:]
+            n = M.shape[0]
+            row.append((M.diag().mean() - (M.sum() - M.diag().sum()) / (n * n - n)).item())
+        out.append(row)
+    return out

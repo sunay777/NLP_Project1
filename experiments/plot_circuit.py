@@ -6,8 +6,8 @@
       (together these build the shifted variant's key/value);
   (b) batch-averaged attention of the best L1 induction head from each query to
       positions relative to its match (match_sym-1 ... match_sym+3);
-  (c) query accuracy after zero-ablating each head, each layer, and the
-      induction set (dashed line = unablated).
+  (c) query accuracy after zero-ablating each head and each whole layer
+      (dashed line = unablated; variant-agnostic).
 Averaging over a large batch (not one example) shows the typical pattern.
 
 Run:  python -m experiments.plot_circuit --mode base --model results/single_base/model.pt \
@@ -82,9 +82,8 @@ def main():
             hk = ablate_heads(m, cfg, [(l, h)])
             names.append(f"L{l}H{h}"); accs.append(query_label_accuracy(m, b, cfg))
             for x in hk: x.remove()
-    ind_set = [(cfg.n_layers - 1, h) for h in circ["induction_set"]]
     for nm, hs in [("all\nL0", [(0, h) for h in range(cfg.n_heads)]),
-                   ("L1 ind.\nset", ind_set)]:
+                   ("all\nL1", [(cfg.n_layers - 1, h) for h in range(cfg.n_heads)])]:
         hk = ablate_heads(m, cfg, hs)
         names.append(nm); accs.append(query_label_accuracy(m, b, cfg))
         for x in hk: x.remove()
@@ -111,8 +110,7 @@ def main():
     fig.colorbar(im, cax=cax, label="mean attention")
 
     x = np.arange(len(names))
-    cols = [SERIES["induction"] if n.startswith("L1") else SERIES["diversity"]
-            for n in names]
+    cols = [SERIES["induction"] if ("L1" in n) else SERIES["diversity"] for n in names]
     ax[3].bar(x, accs, color=cols, width=0.7)
     ax[3].axhline(base_acc, ls="--", color=INK2, lw=1)
     ax[3].axhline(1 / cfg.n_labels, ls=":", color=INK2, lw=1)
