@@ -6,12 +6,10 @@ Token scheme (single shared vocabulary):
 Keeping symbols and labels in disjoint id ranges makes attention maps and
 embedding plots unambiguous to read during interpretation.
 
-Task shape: each sequence draws `n_classes` distinct symbols and gives each a
-fixed random label. The `n_pairs` context slots are filled from those classes
-WITH REPEATS, so a symbol's label becomes induction-predictable the second time
-it appears. That density of induction signal is what lets the circuit form.
-A reserved query class appears exactly once in context and again as the query,
-giving each query a unique earlier match (clean induction probe).
+Task shape (see src/data.py): each sequence draws K = n_pairs distinct symbols,
+each with a random label; a STUDY block lists the K pairs in one random order and
+a QUERY block repeats the same symbols in an independent random order, so each
+query label must be copied from the study block by a content-based induction head.
 """
 from dataclasses import dataclass
 
