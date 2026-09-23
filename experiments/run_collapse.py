@@ -32,6 +32,9 @@ def main():
     ap.add_argument("--eval_every", type=int, default=500)
     ap.add_argument("--threads", type=int, default=0, help="torch threads (0 = default)")
     ap.add_argument("--out", default="results/collapse.json")
+    ap.add_argument("--gen0_pool", action="store_true",
+                    help="train gen 0 on a fixed real pool of --pool_size (removes the "
+                         "unlimited->finite data confound between gen 0 and gen 1)")
     ap.add_argument("--save_models", action="store_true",
                     help="save gen-0 and final-gen weights next to --out")
     args = ap.parse_args()
@@ -59,7 +62,7 @@ def main():
                                    temperature=args.temperature,
                                    gen_queries=args.gen_queries,
                                    gate=args.gate, max_retries=args.max_retries,
-                                   verbose=True,
+                                   verbose=True, gen0_pool=args.gen0_pool,
                                    save_prefix=(f"{os.path.splitext(args.out)[0]}_rf{frac:g}_s{seed}"
                                                 if args.save_models else None))
             all_runs.append({"real_fraction": frac, "seed": seed, "records": records})
