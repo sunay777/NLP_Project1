@@ -86,6 +86,7 @@ Table~\ref{tab:results} reports extended-mode conditional diversity, off-context
 \captionsetup{type=table, font=sf, width=0.95\linewidth}
 \captionof{table}{\looseness=-1 Extended mode, final generation (mean $\pm$ sd, 3 seeds). Conditional diversity and off-context mass move together and monotonically with \texttt{real\_fraction}; induction strength and query accuracy do not.}
 \label{tab:results}
+\resizebox{\linewidth}{!}{%
 \begin{tabular}{|c|c|c|c|c|}
 \hline
 real frac. & cond. div. & off-ctx mass & induction & query acc \\
@@ -100,7 +101,8 @@ real frac. & cond. div. & off-ctx mass & induction & query acc \\
 \hline
 1.0  & 0.897 $\pm$ 0.018 & 0.012 $\pm$ 0.001 & 0.938 & 1.000 \\
 \hline
-\end{tabular}
+\end{tabular}%
+}
 \end{center}
 
 Figure~\ref{fig:dose} shows this as a dose-response: conditional diversity and off-context mass move smoothly with \texttt{real\_fraction} (no sharp critical fraction), while induction strength for both modes sits in a narrow, flat band throughout. Re-probing all 30 saved final-generation models confirms this causally: every one retains a canonical or near-canonical circuit, with whole-layer-1 ablation costing 0.74--1.00 accuracy (extended) / 0.61--0.93 (base). Two checks matter for these numbers. A finite-data confound: even \texttt{real\_fraction}$=$1 drops conditional diversity from 0.994 (generation 0, unlimited data) to $\sim$0.90 once generation $\geq$1 trains on a finite 20k pool ($\sim$77 epochs) -- the recursive effect is the residual gap to this control, not the raw drop from generation 0. Circuit multiplicity: 10/90 extended and 6/90 base generations converge on a non-canonical but fully accurate algorithm -- a ``shifted'' copy (via a $t{-}2$ head) or an ``elimination'' strategy (attending \emph{away} from the match, suppressing non-matches) -- and attention-pattern reading alone falsely calls 9 and 6 of these collapsed, though ablation shows both are load-bearing.
