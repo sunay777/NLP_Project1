@@ -81,11 +81,10 @@ The induction circuit is a two-step composition: a previous-token head (layer 0)
 \looseness=-1
 Table~\ref{tab:results} reports extended-mode conditional diversity, off-context mass, induction strength and query accuracy at the final generation, mean $\pm$ sd over 3 seeds (generation 0, fresh data: conditional diversity 0.994, off-context mass 0.012). Marginal diversity stays at 1.000--1.009 at every fraction and generation -- entirely uninformative here. The base-mode control (which has no free generative slot) stays at query accuracy $\geq$0.997 with induction strength 0.84--0.96 and no trend with \texttt{real\_fraction}.
 
-\begin{table}[h!]
+\begin{table}[H]
 \centering
-\captionsetup{font=sf, width=0.95\linewidth, skip=4pt}
+\captionsetup{font=sf, width=0.95\linewidth}
 \caption{\looseness=-1 Extended mode, final generation (mean $\pm$ sd, 3 seeds). Conditional diversity and off-context mass move together and monotonically with \texttt{real\_fraction}; induction strength and query accuracy do not.}
-\vspace{2pt}
 \begin{tabular}{|c|c|c|c|c|}
 \hline
 real frac. & cond. div. & off-ctx mass & induction & query acc \\
@@ -102,7 +101,6 @@ real frac. & cond. div. & off-ctx mass & induction & query acc \\
 \hline
 \end{tabular}
 \label{tab:results}
-\vspace{4pt}
 \end{table}
 
 Figure~\ref{fig:dose} shows this as a dose-response: conditional diversity and off-context mass move smoothly with \texttt{real\_fraction} (no sharp critical fraction), while induction strength for both modes sits in a narrow, flat band throughout. Re-probing all 30 saved final-generation models confirms this causally: every one retains a canonical or near-canonical circuit, with whole-layer-1 ablation costing 0.74--1.00 accuracy (extended) / 0.61--0.93 (base). Two checks matter for these numbers. A finite-data confound: even \texttt{real\_fraction}$=$1 drops conditional diversity from 0.994 (generation 0, unlimited data) to $\sim$0.90 once generation $\geq$1 trains on a finite 20k pool ($\sim$77 epochs) -- the recursive effect is the residual gap to this control, not the raw drop from generation 0. Circuit multiplicity: 10/90 extended and 6/90 base generations converge on a non-canonical but fully accurate algorithm -- a ``shifted'' copy (via a $t{-}2$ head) or an ``elimination'' strategy (attending \emph{away} from the match, suppressing non-matches) -- and attention-pattern reading alone falsely calls 9 and 6 of these collapsed, though ablation shows both are load-bearing.
