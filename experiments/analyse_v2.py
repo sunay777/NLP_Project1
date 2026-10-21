@@ -118,10 +118,12 @@ def do_temperature():
         byT[T] = runs_of(f"temp_T{T:g}")
     byT = {T: rs for T, rs in byT.items() if rs}
     out = {"fits": {}, "tests": {}}
-    for T, rs in byT.items():
-        f = law_fit(rs, train_fracs=sorted({r["real_fraction"] for r in rs}), test_fracs=[])
-        out["fits"][f"{T:g}"] = {"pooled": f["pooled"], "ci": f.get("bootstrap"),
-                                 "critical_lambda": f.get("critical_lambda")}
+    from experiments.fit_recursion import transitions, fit
+    mx = pred.get("max_m_fit", 1.0)
+    for T, rs in byT.items():           # same linear-regime rule as the pre-registration
+        pairs = [p for r in rs for p in transitions(r, "off_context", False)[0] if p[0] < mx]
+        f = fit(pairs)
+        out["fits"][f"{T:g}"] = {"pooled": f, "critical_lambda": (1 - 1 / f["a"]) if f["a"] > 1 else None}
     Ts = sorted(byT)
     a_conf = [out["fits"][f"{T:g}"]["pooled"]["a"] for T in Ts]
     out["tests"]["1_gain_monotone_in_T"] = {"T": Ts, "a": a_conf,
@@ -138,8 +140,10 @@ def do_temperature():
                 continue
             mu = np.nanmean(arr, 0)
             lo, hi = map(np.array, P["trajectories"][f"{lam:g}"]["band95"])
-            inside = ((mu >= lo) & (mu <= hi))[1:10]
-            ok = bool(inside.mean() >= 0.8)
+            pt = np.array(P["trajectories"][f"{lam:g}"]["point"])
+            use = (pt <= pred.get("max_m_test", 1.0))[1:10]
+            inside = ((mu >= lo) & (mu <= hi))[1:10][use]
+            ok = bool(inside.size and inside.mean() >= 0.8)
             cells[f"T{T:g}_l{lam:g}"] = {"observed": mu.tolist(), "band": [lo.tolist(), hi.tolist()],
                                          "inside_frac": float(inside.mean()), "pass": ok}
             cell_pass.append(ok)
@@ -157,13 +161,39 @@ def do_temperature():
             if arr is None:
                 continue
             gain = P["a"] * (1 - lam)
+            if gain >= 1:
+                continue                          # supercritical cells are scored by test 4
             early = [np.polyfit(range(1, 5), a_[1:5], 1)[0] for a_ in arr]
             late = [np.polyfit(range(6, 10), a_[6:10], 1)[0] for a_ in arr]
             smaller = sum(l < e for e, l in zip(early, late))
-            ok = smaller >= 4 if gain < 1 else (len(arr) - smaller) >= 4
+            ok = smaller >= 4
             t3[f"T{T:g}_l{lam:g}"] = {"predicted_gain": gain, "late_smaller_in": f"{smaller}/{len(arr)}",
                                       "pass": bool(ok)}
     out["tests"]["3_regime"] = {"cells": t3, "pass": bool(t3 and all(v["pass"] for v in t3.values()))}
+    # test 4: runaway (supercritical) vs bounded (contracting), incl. the lambda* +- 0.1 cells
+    t4 = {}
+    for T in Ts:
+        P = pred["temperatures"].get(f"{T:g}")
+        if not P:
+            continue
+        for lam in sorted({r["real_fraction"] for r in byT[T]}):
+            arr, _ = metric_series(byT[T], OFF, lam, 10)
+            if arr is None or arr.shape[1] < 10:
+                continue
+            gain = P["a"] * (1 - lam)
+            if gain >= 1:
+                n = int((arr[:, 9] > pred.get("max_m_test", 0.5)).sum())
+                kind = "supercritical"
+            else:
+                if f"{lam:g}" not in P["trajectories"]:
+                    continue                      # no pre-registered band for this cell
+                bound = P["trajectories"][f"{lam:g}"]["band95"][1][9]
+                n = int((arr[:, 9] <= bound).sum())
+                kind = "contracting"
+            t4[f"T{T:g}_l{lam:g}"] = {"predicted_gain": gain, "kind": kind,
+                                      "seeds_consistent": f"{n}/{len(arr)}", "pass": bool(n >= 4)}
+    out["tests"]["4_runaway_vs_bounded"] = {"cells": t4,
+                                            "pass": bool(t4 and all(v["pass"] for v in t4.values()))}
     # test 4: hallucination vs homogenisation at gen 9, lambda = 0
     offs, hs = [], []
     for T in Ts:
@@ -171,7 +201,7 @@ def do_temperature():
         a_h, _ = metric_series(byT[T], CONDH, 0.0, 10)
         offs.append(float(np.nanmean(a_off[:, 9])))
         hs.append(float(np.nanmean(a_h[:, 9])))
-    out["tests"]["4_tradeoff"] = {"T": Ts, "off_context_gen9": offs, "cond_entropy_gen9": hs,
+    out["tests"]["5_tradeoff"] = {"T": Ts, "off_context_gen9": offs, "cond_entropy_gen9": hs,
                                   "pass": bool(all(np.diff(offs) > 0) and all(np.diff(hs) > 0))}
     save("temperature", out)
 

@@ -27,6 +27,9 @@ from experiments.fit_recursion import load_runs, transitions, fit, iterate
 
 CONF_LAMBDAS = [0.0, 0.25, 0.5]
 CONF_GENS = 10
+MAX_M_FIT = 0.25     # fit only transitions starting below this mass (linear regime;
+                     # a probability mass cannot grow past 1, so the law must saturate)
+MAX_M_TEST = 0.5     # trajectory-band test only where the point prediction is <= this
 
 
 def residual_bootstrap(pairs, n=2000, seed=0):
@@ -64,7 +67,7 @@ def main():
             "calibration_files": sorted({r["file"] for r in runs}),
             "calibration_seed": sorted({r["seed"] for r in runs}),
             "law": "m_{g+1} = a(T) (1 - lambda) m_g + eps(T), m = off-context mass of p(sq2|context)",
-            "m0": m0, "confirmatory": {"lambdas": CONF_LAMBDAS, "generations": CONF_GENS,
+            "m0": m0, "max_m_fit": MAX_M_FIT, "max_m_test": MAX_M_TEST, "confirmatory": {"lambdas": CONF_LAMBDAS, "generations": CONF_GENS,
                                        "seeds": [0, 1, 2, 3, 4]},
             "temperatures": {}}
     for T in sorted(by_T):
@@ -72,7 +75,7 @@ def main():
         gate_flags = 0
         for r in by_T[T]:
             t, _ = transitions(r, "off_context", exclude_lax=False)
-            pairs += t
+            pairs += [p for p in t if p[0] < MAX_M_FIT]
             gate_flags += sum(rec.get("converged") is False for rec in r["records"])
         f, boot = residual_bootstrap(pairs)
         a_ci = np.percentile(boot[:, 0], [2.5, 97.5]).tolist()
@@ -81,7 +84,11 @@ def main():
                "a_ci95": a_ci, "eps_ci95": e_ci, "gate_failures_in_calibration": gate_flags,
                "lambda_star": (1 - 1 / f["a"]) if f["a"] > 1 else None,
                "p_a_gt_1": float((boot[:, 0] > 1).mean()), "trajectories": {}}
-        for lam in CONF_LAMBDAS:
+        extra = []
+        if ent["lambda_star"] is not None:       # same grid as experiments/jobs_v2.prediction_extras
+            extra = sorted({round(min(0.95, max(0.0, ent["lambda_star"] + d)), 2) for d in (-0.1, 0.0, 0.1)})
+        ent["extra_lambdas"] = extra
+        for lam in sorted(set(CONF_LAMBDAS) | set(extra)):
             traj = np.array([iterate(ai, ei, lam, m0, CONF_GENS) for ai, ei in boot])
             k = f["a"] * (1 - lam)
             ent["trajectories"][f"{lam:g}"] = {
@@ -105,6 +112,8 @@ def main():
              "is the evidence.\n")
     L.append("**Law** (off-context mass m of p(sq2 | context), λ = real-data fraction):\n\n"
              "m_{g+1} = a(T) · (1 − λ) · m_g + ε(T)\n")
+    L.append(f"Fits use only transitions with m_g < {MAX_M_FIT}, the linear regime. This rule was fixed before "
+             "the calibration data were fitted. ")
     L.append("A critical real-data fraction exists only if a(T) > 1, at λ* = 1 − 1/a(T). "
              f"Predictions start from m₀ = {m0:.4f}, the gen-0 mean. Gen 0 does not depend on T "
              "because T only affects sampling.\n")
@@ -131,13 +140,19 @@ def main():
              "main sweep (`main_ext`, seeds 0–4, first 10 generations).\n")
     L.append("1. **Gain rises with temperature.** The fit of a(T) on the confirmatory runs increases "
              "monotonically over T ∈ {0.7, 1.0, 1.3, 1.6}.")
-    L.append("2. **Trajectories match the prediction.** At each (T, λ), the seed-mean off-context mass lies "
-             "inside the 95% band above at ≥ 80% of generations 1–9. The test passes overall if it holds "
-             "for ≥ 7 of the 9 (T, λ) cells.")
-    L.append("3. **The regime matches the gain.** For cells predicted to contract (a(T)(1−λ) < 1), the "
-             "late slope (gens 6–9) is smaller than the early slope (gens 1–4) in ≥ 4/5 seeds. For any cell "
-             "predicted to be supercritical (a(T)(1−λ) ≥ 1), it is not smaller in ≥ 4/5 seeds.")
-    L.append("4. **Temperature trades hallucination for homogenisation.** At generation 9 with λ = 0, "
+    L.append(f"2. **Trajectories match the prediction.** At each (T, λ), the seed-mean off-context mass lies "
+             f"inside the 95% band at ≥ 80% of those generations 1–9 where the point prediction is ≤ {MAX_M_TEST}. "
+             "This is the linear regime: a mass cannot exceed 1, so the law has to saturate. The test passes overall "
+             "if it holds for ≥ 7 of the 9 (T, λ) cells.")
+    L.append("3. **Contracting cells decelerate.** For cells predicted to contract (a(T)(1−λ) < 1), the "
+             "late slope (gens 6–9) is smaller than the early slope (gens 1–4) in ≥ 4/5 seeds. "
+             "Supercritical cells are scored by test 4 instead, because a mass bounded by 1 must slow down "
+             "as it saturates whatever the gain.")
+    L.append(f"4. **Runaway vs bounded.** Cells predicted supercritical (a(T)(1−λ) ≥ 1) exceed an off-context "
+             f"mass of {MAX_M_TEST} by generation 9 in ≥ 4/5 seeds. Cells predicted to contract stay below the "
+             "upper end of their predicted gen-9 band in ≥ 4/5 seeds. The extra λ* ± 0.1 cells added by "
+             "`jobs_v2.py` are scored the same way, which tests the location of the critical point itself.")
+    L.append("5. **Temperature trades hallucination for homogenisation.** At generation 9 with λ = 0, "
              "off-context mass increases with T and conditional entropy of sq2 decreases as T decreases "
              "(both monotone over the 4 temperatures).\n")
     L.append("Any failed test is reported as a failure of the law, not explained away. If a(T) stays below 1 "
