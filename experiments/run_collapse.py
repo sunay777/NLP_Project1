@@ -35,9 +35,36 @@ def main():
     ap.add_argument("--gen0_pool", action="store_true",
                     help="train gen 0 on a fixed real pool of --pool_size (removes the "
                          "unlimited->finite data confound between gen 0 and gen 1)")
-    ap.add_argument("--save_models", action="store_true",
-                    help="save gen-0 and final-gen weights next to --out")
+    ap.add_argument("--save_models", nargs="?", const="ends", default="none",
+                    choices=["none", "ends", "all"],
+                    help="save weights next to --out: 'ends' = gen 0 + final (bare flag), "
+                         "'all' = every generation")
+    # ---- v2 options (defaults reproduce the original sweep) ----
+    ap.add_argument("--device", default="auto", help="cpu | mps | cuda | auto")
+    ap.add_argument("--real_gate", type=float, default=None,
+                    help="gen-0 accuracy gate (default: 0.9, or --gate if --gate_causal set)")
+    ap.add_argument("--gate_causal", type=float, default=None,
+                    help="strict gate: also require causal_drop_L1 >= this on real data")
+    ap.add_argument("--save_pools", action="store_true", help="save every training pool")
+    ap.add_argument("--pulse_gen", type=int, default=None)
+    ap.add_argument("--pulse_label_noise", type=float, default=0.0)
+    ap.add_argument("--pulse_offcontext", type=float, default=0.0)
+    ap.add_argument("--accumulate", action="store_true",
+                    help="train on the union of all previous pools (needs --gen0_pool)")
+    ap.add_argument("--full_lm", action="store_true", help="supervise every next token")
+    ap.add_argument("--gen_context", action="store_true",
+                    help="fully synthetic sequences: model writes the context too (needs --full_lm)")
+    ap.add_argument("--scrub", default="none", choices=["none", "offctx", "labels", "both"])
+    ap.add_argument("--sq2_zipf", type=float, default=0.0)
+    ap.add_argument("--n_layers", type=int, default=2)
+    ap.add_argument("--d_model", type=int, default=64)
+    ap.add_argument("--n_heads", type=int, default=4)
+    ap.add_argument("--use_mlp", action="store_true")
+    ap.add_argument("--n_pairs", type=int, default=4)
+    ap.add_argument("--n_symbols", type=int, default=16)
     args = ap.parse_args()
+    real_gate = args.real_gate if args.real_gate is not None else (
+        args.gate if args.gate_causal is not None else 0.9)
 
     if args.threads:
         import torch
@@ -54,17 +81,27 @@ def main():
             if (frac, seed) in done:
                 print(f"skip real_fraction={frac} seed={seed} (already in {args.out})")
                 continue
-            cfg = Config(mode=args.mode, steps=args.steps, eval_every=args.eval_every)
+            cfg = Config(mode=args.mode, steps=args.steps, eval_every=args.eval_every,
+                         device=args.device, sq2_zipf=args.sq2_zipf, full_lm=args.full_lm,
+                         n_layers=args.n_layers, d_model=args.d_model, n_heads=args.n_heads,
+                         use_mlp=args.use_mlp, n_pairs=args.n_pairs, n_symbols=args.n_symbols)
             print(f"\n=== {args.mode} gen_queries={args.gen_queries} T={args.temperature} "
                   f"real_fraction={frac}  seed={seed} ===", flush=True)
             records = run_collapse(cfg, args.generations, frac, seed,
                                    pool_size=args.pool_size,
                                    temperature=args.temperature,
                                    gen_queries=args.gen_queries,
-                                   gate=args.gate, max_retries=args.max_retries,
+                                   gate=args.gate, real_gate=real_gate,
+                                   max_retries=args.max_retries,
                                    verbose=True, gen0_pool=args.gen0_pool,
-                                   save_prefix=(f"{os.path.splitext(args.out)[0]}_rf{frac:g}_s{seed}"
-                                                if args.save_models else None))
+                                   gate_causal=args.gate_causal,
+                                   save_models=args.save_models, save_pools=args.save_pools,
+                                   pulse_gen=args.pulse_gen,
+                                   pulse_label_noise=args.pulse_label_noise,
+                                   pulse_offcontext=args.pulse_offcontext,
+                                   accumulate=args.accumulate, gen_context=args.gen_context,
+                                   scrub=args.scrub,
+                                   save_prefix=f"{os.path.splitext(args.out)[0]}_rf{frac:g}_s{seed}")
             all_runs.append({"real_fraction": frac, "seed": seed, "records": records})
             with open(args.out, "w") as f:
                 json.dump({"config": vars(args), "runs": all_runs}, f, indent=1)

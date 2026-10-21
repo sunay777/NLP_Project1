@@ -68,6 +68,12 @@ def make_batch(cfg, batch_size, rng, device="cpu"):
     gen_symbol_pos = -1
     if cfg.mode == "extended":
         nxt = rng.integers(0, K, size=B)                                   # free next symbol
+        if getattr(cfg, "sq2_zipf", 0.0) > 0:
+            # Zipfian free choice: in-context symbol c gets weight (c + 1)^-alpha, so
+            # globally rare (high-id) symbols are the tail of p(sq2 | context).
+            w = sq2_weights(classes, cfg.sq2_zipf)                          # (B,K)
+            u = rng.random((B, 1))
+            nxt = np.minimum((np.cumsum(w, axis=1) < u).sum(1), K - 1)
         sq2 = classes[rows, nxt]
         lq2 = class_label[rows, nxt]
         seq[:, 4 * K] = sq2
@@ -75,6 +81,11 @@ def make_batch(cfg, batch_size, rng, device="cpu"):
         targets[:, 4 * K - 1] = sq2                                        # predict next symbol
         targets[:, 4 * K] = lq2                                            # predict its label
         gen_symbol_pos = 4 * K - 1
+
+    if getattr(cfg, "full_lm", False):
+        # language-model every position: targets[t] = seq[t+1]. Identical to the
+        # targets above at the query/sq2/lq2 slots; adds study/query symbol slots.
+        targets[:, :-1] = seq[:, 1:]
 
     return {
         "idx": torch.from_numpy(seq).to(device),
@@ -84,6 +95,12 @@ def make_batch(cfg, batch_size, rng, device="cpu"):
         "match_label_pos": torch.from_numpy(match_label_pos).to(device),
         "gen_symbol_pos": gen_symbol_pos,
     }
+
+
+def sq2_weights(classes, alpha):
+    """True p(sq2 | context) over the K in-context symbols (rows sum to 1)."""
+    w = (np.asarray(classes, dtype=np.float64) + 1.0) ** (-alpha)
+    return w / w.sum(1, keepdims=True)
 
 
 class TensorDataset:

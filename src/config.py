@@ -24,6 +24,12 @@ class Config:
     n_labels: int = 6        # pool of label ids
     n_pairs: int = 4         # K: distinct symbols; K study pairs + K queries
     mode: str = "base"       # "base" (generate 1 token) or "extended" (generate 3)
+    sq2_zipf: float = 0.0    # extended: sq2 drawn among the K in-context symbols with
+                             # weight (symbol_id + 1)^-alpha (0 = uniform, the default).
+                             # alpha > 0 gives the free choice a TAIL (rare symbols).
+    full_lm: bool = False    # supervise EVERY next token (study/query symbols too), so
+                             # the model learns the context distribution and can
+                             # generate fully synthetic sequences (gen_context)
 
     # ---- model ----
     d_model: int = 64

@@ -30,6 +30,31 @@ Reliability safeguards (a failed optimisation must not be read as collapse):
     converged=False;
   * collision-free seeding: init seed = seed*1000 + 10*g + attempt, so different
     seeds never share an initialisation (previously seed s, gen 1 == seed s+1, gen 0).
+  * strict gate (v2 runs: gate=0.98, gate_causal=0.5): the accuracy criterion
+    above AND causal_drop_L1 >= gate_causal on real probe data (the model
+    actually depends on layer-1 attention, i.e. a circuit formed). The 0.9 gate
+    let through models with 0.958 accuracy whose pools then held 11.7 % wrong
+    labels (results/v2/gate_audit.csv).
+
+v2 interventions (all default off, so earlier results reproduce unchanged):
+  pulse_gen / pulse_label_noise / pulse_offcontext
+      one-off poison: in generation pulse_gen's pool only, corrupt that fraction
+      of SYNTHETIC query labels (random wrong label) or sq2 symbols (random
+      off-context symbol). Uses its own RNG stream, so a pulsed run and the
+      un-pulsed run with the same seed share every pool up to the pulse
+      (paired impulse response).
+  accumulate
+      Gerstgrasser et al. (2024)-style: generation g trains on the union of all
+      previous pools (gen-0 real pool included) instead of replacing them.
+  gen_context  (needs cfg.full_lm)
+      fully synthetic sequences: the model also generates the study block and
+      the query symbols (seeded by one real first symbol). Pool label
+      correctness is then judged against the sequence's OWN study block.
+  scrub = "offctx" | "labels" | "both"
+      counterfactual data attribution: drop synthetic sequences carrying an
+      off-context sq2 and/or a wrong query label (topped up with fresh samples
+      so the pool size is unchanged). If inherited errors travel through those
+      sequences, scrubbing removes the a*m_g term of the inheritance law.
 """
 import dataclasses
 import time
@@ -49,8 +74,50 @@ def query_positions(cfg):
     return list(range(2 * K, 4 * K, 2))
 
 
+def consistent_targets(idx, targets, cfg):
+    """Ground truth for a (possibly model-written) sequence, judged against its
+    OWN study block: each query label must equal the label after the first
+    matching study symbol (-1 if the query symbol never appears in study)."""
+    K = cfg.n_pairs
+    true = targets.clone()
+    study_sym = idx[:, 0:2 * K:2]
+    study_lab = idx[:, 1:2 * K:2]
+    for qp in query_positions(cfg):
+        hit = study_sym == idx[:, qp][:, None]                             # (B,K)
+        lab = study_lab.gather(1, hit.float().argmax(1, keepdim=True)).squeeze(1)
+        true[:, qp] = torch.where(hit.any(1), lab, torch.full_like(lab, -1))
+    return true
+
+
+def wellformed(idx, cfg):
+    """Fraction of sequences that obey the task grammar: K distinct symbols with
+    label tokens after them, and a query block that permutes the study symbols."""
+    K, S = cfg.n_pairs, cfg.n_symbols
+    st, sl = idx[:, 0:2 * K:2], idx[:, 1:2 * K:2]
+    qs, ql = idx[:, 2 * K:4 * K:2], idx[:, 2 * K + 1:4 * K:2]
+    ok = (st < S).all(1) & (sl >= S).all(1) & (qs < S).all(1) & (ql >= S).all(1)
+    srt = st.sort(1).values
+    ok &= (srt[:, 1:] != srt[:, :-1]).all(1)
+    ok &= (srt == qs.sort(1).values).all(1)
+    return ok.float().mean().item()
+
+
+def _offctx_rows(idx, cfg):
+    """Rows whose sq2 (extended) is not one of the K study symbols."""
+    K = cfg.n_pairs
+    if cfg.mode != "extended":
+        return torch.zeros(idx.shape[0], dtype=torch.bool, device=idx.device)
+    return ~(idx[:, 0:2 * K:2] == idx[:, 4 * K][:, None]).any(1)
+
+
+def _wrong_label_rows(batch, cfg):
+    qp = query_positions(cfg)
+    return (batch["targets"][:, qp] != batch["true_targets"][:, qp]).any(1)
+
+
 @torch.no_grad()
-def generate_dataset(model, cfg, n, rng, device, temperature=1.0, gen_queries="first"):
+def generate_dataset(model, cfg, n, rng, device, temperature=1.0, gen_queries="first",
+                     gen_context=False):
     model.eval()
     batch = datamod.make_batch(cfg, n, rng, device)
     batch["true_targets"] = batch["targets"].clone()
@@ -60,8 +127,12 @@ def generate_dataset(model, cfg, n, rng, device, temperature=1.0, gen_queries="f
     L = cfg.max_len
     K = cfg.n_pairs
 
-    qps = query_positions(cfg) if gen_queries == "all" else [2 * K]
-    gen_positions = qps + ([4 * K - 1, 4 * K] if cfg.mode == "extended" else [])
+    if gen_context:
+        # every token after the (real) first study symbol is model-written
+        gen_positions = list(range(0, L - 1))
+    else:
+        qps = query_positions(cfg) if gen_queries == "all" else [2 * K]
+        gen_positions = qps + ([4 * K - 1, 4 * K] if cfg.mode == "extended" else [])
     for pos in gen_positions:
         logits = model(idx)[rows, pos] / temperature
         sample = torch.distributions.Categorical(logits=logits).sample()
@@ -72,7 +143,77 @@ def generate_dataset(model, cfg, n, rng, device, temperature=1.0, gen_queries="f
     batch["idx"] = idx
     batch["targets"] = targets
     batch["query_tgt"] = targets[:, 2 * K].clone()
+    if gen_context:
+        batch["true_targets"] = consistent_targets(idx, targets, cfg)
+        # the probe fields must describe the generated sequence, not the seed one
+        sym_pos = (idx[:, 0:2 * K:2] == idx[:, 2 * K][:, None]).float().argmax(1)
+        batch["match_label_pos"] = 2 * sym_pos + 1
     return batch
+
+
+def _generate_pool(model, cfg, n, rng, device, temperature, gen_queries, gen_context, scrub):
+    """n synthetic sequences; with scrub, rows carrying the scrubbed error type are
+    dropped and replaced by fresh samples (counterfactual pool, same size)."""
+    b = generate_dataset(model, cfg, n, rng, device, temperature, gen_queries, gen_context)
+    if scrub in (None, "none"):
+        return b, {}
+    def bad_rows(x):
+        bad = torch.zeros(x["idx"].shape[0], dtype=torch.bool, device=x["idx"].device)
+        if scrub in ("offctx", "both"):
+            bad |= _offctx_rows(x["idx"], cfg)
+        if scrub in ("labels", "both"):
+            bad |= _wrong_label_rows(x, cfg)
+        return bad
+    keys = [k for k in b if torch.is_tensor(b[k]) and b[k].dim() >= 1 and b[k].shape[0] == n]
+    bad = bad_rows(b)
+    removed, rounds = int(bad.sum()), 0
+    kept = {k: b[k][~bad] for k in keys}
+    while kept["idx"].shape[0] < n and rounds < 5:
+        need = n - kept["idx"].shape[0]
+        extra = generate_dataset(model, cfg, max(need * 2, 256), rng, device,
+                                 temperature, gen_queries, gen_context)
+        ok = ~bad_rows(extra)
+        kept = {k: torch.cat([kept[k], extra[k][ok][:need]], 0) for k in keys}
+        rounds += 1
+    short = n - kept["idx"].shape[0]
+    if short > 0:                 # could not find enough clean rows: keep some originals
+        kept = {k: torch.cat([kept[k], b[k][bad][:short]], 0) for k in keys}
+    out = {**b, **{k: v[:n] for k, v in kept.items()}}
+    return out, {"scrub_removed_frac": removed / n, "scrub_topup_rounds": rounds,
+                 "scrub_unfilled_frac": max(short, 0) / n}
+
+
+def _apply_pulse(batch, cfg, prng, label_noise, offcontext):
+    """One-off poison of a synthetic batch (in place); returns realised rates."""
+    idx, tgt = batch["idx"], batch["targets"]
+    B, K, S, NL = idx.shape[0], cfg.n_pairs, cfg.n_symbols, cfg.n_labels
+    dev = idx.device
+    out = {}
+    if label_noise > 0:
+        hits = 0
+        for qp in query_positions(cfg):
+            m = torch.from_numpy(prng.random(B) < label_noise).to(dev)
+            shift = torch.from_numpy(prng.integers(1, NL, size=B)).to(dev)
+            new = S + (tgt[:, qp] - S + shift) % NL                       # != current
+            tgt[:, qp] = torch.where(m, new, tgt[:, qp])
+            idx[:, qp + 1] = torch.where(m, new, idx[:, qp + 1])
+            hits += int(m.sum())
+        out["pulse_label_rate"] = hits / (B * K)
+    if offcontext > 0 and cfg.mode == "extended":
+        m = torch.from_numpy(prng.random(B) < offcontext).to(dev)
+        study = idx[:, 0:2 * K:2].cpu().numpy()
+        sym = np.empty(B, dtype=np.int64)
+        for r in range(B):                                    # random OFF-context symbol
+            free = np.setdiff1d(np.arange(S), study[r])
+            sym[r] = free[prng.integers(0, len(free))]
+        sym = torch.from_numpy(sym).to(dev)
+        lab = torch.from_numpy(prng.integers(0, NL, size=B) + S).to(dev)
+        idx[:, 4 * K] = torch.where(m, sym, idx[:, 4 * K])
+        tgt[:, 4 * K - 1] = torch.where(m, sym, tgt[:, 4 * K - 1])
+        idx[:, 4 * K + 1] = torch.where(m, lab, idx[:, 4 * K + 1])
+        tgt[:, 4 * K] = torch.where(m, lab, tgt[:, 4 * K])
+        out["pulse_offctx_rate"] = float(m.float().mean())
+    return out
 
 
 def _real(cfg, n, rng, device):
@@ -93,14 +234,43 @@ def _label_correctness(batch, cfg):
     return (batch["targets"][:, qp] == batch["true_targets"][:, qp]).float().mean().item()
 
 
+def _pool_stats(data, cfg):
+    """Error content of the SYNTHETIC share of a training pool."""
+    syn = data["is_syn"]
+    out = {"pool_label_correct": _label_correctness(data, cfg)}
+    if syn.any():
+        qp = query_positions(cfg)
+        wrong = (data["targets"][syn][:, qp] != data["true_targets"][syn][:, qp]).float()
+        out["pool_syn_wrong_label"] = wrong.mean().item()
+        out["pool_syn_offctx"] = _offctx_rows(data["idx"][syn], cfg).float().mean().item()
+        out["pool_syn_wellformed"] = wellformed(data["idx"][syn], cfg)
+    return out
+
+
+@torch.no_grad()
+def _causal_L1(model, batch, cfg):
+    acc = probes.query_label_accuracy(model, batch, cfg)
+    last = cfg.n_layers - 1
+    hk = probes.ablate_heads(model, cfg, [(last, h) for h in range(cfg.n_heads)])
+    abl = probes.query_label_accuracy(model, batch, cfg)
+    for x in hk:
+        x.remove()
+    return acc - abl
+
+
 def _record(g, model, cfg, eval_rng, device, eval_batch, extra):
     test = datamod.make_batch(cfg, eval_batch, eval_rng, device)
     circ = probes.circuit_probe(model, test, cfg)
+    nll, ppl, slots = metrics.query_nll_all(model, test, cfg)
     rec = {
         "generation": g,
         "query_acc": metrics.query_accuracy(model, test),          # first query (legacy)
         "query_acc_all": circ["query_acc_all"],                    # all K queries
-        "query_ppl": metrics.query_perplexity(model, test),
+        "query_ppl": metrics.query_perplexity(model, test),        # first query (legacy)
+        "query_nll_all": nll,                                      # all K queries
+        "query_ppl_all": ppl,
+        "query_nll_slots": slots,
+        "test_loss": metrics.supervised_loss(model, test),         # real held-out data
         "induction": circ["induction_legacy"],                     # legacy probe
         "circuit": circ,
     }
@@ -113,28 +283,43 @@ def _record(g, model, cfg, eval_rng, device, eval_batch, extra):
         rec["qslot"] = metrics.slot_stats(sym, gen["idx"], cfg.n_pairs, block="query")
         rec["diversity"] = metrics.distribution_stats(sym.cpu().numpy(), cfg.n_symbols)
         rec["kl_uniform"] = metrics.kl_to_uniform(sym.cpu().numpy(), cfg.n_symbols)
+    if cfg.full_lm:
+        # can the model write a grammatical context on its own? (seeded by 1 real token)
+        own = generate_dataset(model, cfg, eval_batch, eval_rng, device, gen_context=True)
+        rec["selfgen_wellformed"] = wellformed(own["idx"], cfg)
+        rec["selfgen_label_correct"] = _label_correctness(own, cfg)
     rec.update(extra)
     return rec
 
 
 def _train_gated(cfg, seed, g, train_sampler, val_batch, probe_batch, label_ok,
-                 gate, max_retries, real_gate):
+                 gate, max_retries, real_gate, gate_causal=None):
     """Train (with retries) until the convergence gate passes."""
     attempts, best = [], None
+    nv = min(cfg.eval_batch, val_batch["idx"].shape[0])
+    vfix = {k: (v[:nv] if torch.is_tensor(v) and v.dim() >= 1 else v) for k, v in val_batch.items()}
+    val_sampler = lambda bs, r, dev: vfix
     for a in range(max_retries + 1):
         c = dataclasses.replace(cfg, seed=seed * 1000 + 10 * g + a)
         t0 = time.time()
-        model, hist = train_model(c, train_sampler, val_sampler=None,
+        model, hist = train_model(c, train_sampler, val_sampler=val_sampler,
                                   probe_batch=probe_batch, log=False)
         val_acc = _pool_val_acc(model, val_batch, cfg)
         target = real_gate if label_ok is None else gate * label_ok
         ok = val_acc >= target
+        causal = None
+        if gate_causal is not None:
+            causal = _causal_L1(model, probe_batch, cfg)
+            ok = ok and causal >= gate_causal
         attempts.append({"init_seed": c.seed, "val_acc": val_acc, "target": target,
-                         "passed": ok, "seconds": round(time.time() - t0, 1),
+                         "causal_L1": causal, "passed": ok,
+                         "val_loss": metrics.supervised_loss(model, val_batch),
+                         "seconds": round(time.time() - t0, 1),
                          "transition_step": next((r["step"] for r in hist
                                                   if r.get("induction", 0) > 0.5), None)})
-        if best is None or val_acc > best[1]:
-            best = (model, val_acc)
+        key = (ok, val_acc)
+        if best is None or key > best[1]:
+            best = (model, key, hist)
         if ok:
             break
     # A model with NO induction still scores ~0.45 by guessing among the labels
@@ -143,78 +328,120 @@ def _train_gated(cfg, seed, g, train_sampler, val_batch, probe_batch, label_ok,
     # from 'faithfully fit a corrupted pool' -> flag it; use circuit/causal_drop.
     informative = label_ok is None or label_ok >= 0.6
     return best[0], {"attempts": attempts, "retries": len(attempts) - 1,
-                     "converged": attempts[-1]["passed"],
-                     "gate_informative": informative}
+                     "converged": best[1][0],
+                     "gate_informative": informative,
+                     "history": best[2]}
+
+
+def _slim(batch):
+    """Compact copy of a pool for --save_pools (token ids fit in int16)."""
+    keep = ("idx", "targets", "true_targets", "is_syn")
+    return {k: (batch[k].to(torch.int16) if batch[k].dtype == torch.long else batch[k]).cpu()
+            for k in keep if k in batch}
 
 
 def run_collapse(cfg, n_generations, real_fraction, seed, pool_size=20000,
                  temperature=1.0, gen_queries="first", gate=0.9, real_gate=0.9,
-                 max_retries=3, verbose=False, save_prefix=None, gen0_pool=False):
+                 max_retries=3, verbose=False, save_prefix=None, gen0_pool=False,
+                 gate_causal=None, save_models="ends", save_pools=False,
+                 pulse_gen=None, pulse_label_noise=0.0, pulse_offcontext=0.0,
+                 accumulate=False, gen_context=False, scrub=None):
     device = resolve_device(cfg.device)
     cfg = dataclasses.replace(cfg, device=device)
+    if gen_context and not cfg.full_lm:
+        raise ValueError("gen_context needs cfg.full_lm (the model must learn the context)")
+    if accumulate and not gen0_pool:
+        raise ValueError("accumulate needs gen0_pool (gen 0's real pool is the first chunk)")
     rng = np.random.default_rng(seed)                     # pools + generation
     eval_rng = np.random.default_rng(seed + 424_242)      # test sets (disjoint stream)
+    prng = np.random.default_rng(seed + 9_191_919)        # poison pulse only
     probe_batch = datamod.make_batch(cfg, cfg.eval_batch, eval_rng, device)
     n_val = max(512, pool_size // 10)
+
+    def save_model(m, g):
+        if save_prefix and (save_models == "all" or
+                            (save_models == "ends" and g in (0, n_generations - 1))):
+            torch.save(m.state_dict(), f"{save_prefix}_gen{g}.pt")
 
     # generation 0: fresh real data every step (default), or -- with gen0_pool --
     # a FIXED real pool of the same size later generations get, so the gen-0 ->
     # gen-1 change is not confounded by the switch from unlimited to finite data.
+    chunks = []
     if gen0_pool:
-        pool0 = TensorDataset(_real(cfg, pool_size, rng, device))
+        b0 = _real(cfg, pool_size, rng, device)
+        b0["is_syn"] = torch.zeros(pool_size, dtype=torch.bool, device=device)
+        pool0 = TensorDataset(b0)
+        chunks.append(pool0)
         real_sampler = lambda bs, r, dev: pool0.sample(bs, r)
     else:
         real_sampler = lambda bs, r, dev: datamod.make_batch(cfg, bs, r, dev)
     val0 = _real(cfg, n_val, eval_rng, device)
     model, info = _train_gated(cfg, seed, 0, real_sampler, val0, probe_batch,
-                               None, gate, max_retries, real_gate)
+                               None, gate, max_retries, real_gate, gate_causal)
     records = [_record(0, model, cfg, eval_rng, device, cfg.eval_batch,
                        {**info, "pool_label_correct": 1.0, "synthetic_fraction": 0.0})]
     if verbose:
         _print(records[-1])
-    if save_prefix:
-        torch.save(model.state_dict(), f"{save_prefix}_gen0.pt")
+    save_model(model, 0)
 
     for g in range(1, n_generations):
         total = pool_size + n_val
         n_real = int(round(total * real_fraction))
         n_syn = total - n_real
-        parts = []
+        parts, extra = [], {}
         if n_real > 0:
-            parts.append(TensorDataset(_real(cfg, n_real, rng, device)))
+            br = _real(cfg, n_real, rng, device)
+            br["is_syn"] = torch.zeros(n_real, dtype=torch.bool, device=device)
+            parts.append(TensorDataset(br))
         if n_syn > 0:
-            parts.append(TensorDataset(generate_dataset(
-                model, cfg, n_syn, rng, device, temperature, gen_queries)))
+            bs_, extra = _generate_pool(model, cfg, n_syn, rng, device, temperature,
+                                        gen_queries, gen_context, scrub)
+            bs_["is_syn"] = torch.ones(n_syn, dtype=torch.bool, device=device)
+            if pulse_gen is not None and g == pulse_gen:
+                extra.update(_apply_pulse(bs_, cfg, prng, pulse_label_noise, pulse_offcontext))
+            parts.append(TensorDataset(bs_))
         pool = parts[0] if len(parts) == 1 else TensorDataset.concat(*parts)
         # shuffle, then split into train / validation
         perm = torch.from_numpy(rng.permutation(pool.n)).to(pool.data["idx"].device)
         data = {k: v[perm] for k, v in pool.data.items()}
         val = {k: v[:n_val] for k, v in data.items()}
         train = TensorDataset({**{k: v[n_val:] for k, v in data.items()}, **pool.meta})
+        if accumulate:
+            chunks.append(train)
+            train = chunks[0]
+            for c in chunks[1:]:
+                train = TensorDataset.concat(train, c)
+            extra["accumulated_pool_size"] = train.n
+            extra["accumulated_syn_fraction"] = train.data["is_syn"].float().mean().item()
         label_ok = _label_correctness(val, cfg)
         sampler = lambda bs, r, dev, train=train: train.sample(bs, r)
+        if save_pools and save_prefix:
+            torch.save(_slim(data), f"{save_prefix}_pool{g}.pt")
 
         model, info = _train_gated(cfg, seed, g, sampler, val, probe_batch,
-                                   label_ok, gate, max_retries, real_gate)
+                                   label_ok, gate, max_retries, real_gate, gate_causal)
         rec = _record(g, model, cfg, eval_rng, device, cfg.eval_batch,
-                      {**info, "pool_label_correct": _label_correctness(data, cfg),
+                      {**info, **_pool_stats(data, cfg), **extra,
                        "synthetic_fraction": n_syn / total})
         records.append(rec)
         if verbose:
             _print(rec)
-    if save_prefix and n_generations > 1:
-        torch.save(model.state_dict(), f"{save_prefix}_gen{n_generations - 1}.pt")
+        save_model(model, g)
     return records
 
 
 def _print(rec):
     c = rec["circuit"]
     s = (f"gen {rec['generation']:2d} | acc_all {rec['query_acc_all']:.3f} | "
+         f"nll {rec.get('query_nll_all', float('nan')):.4f} | "
          f"ind_best {c['induction_best']:.3f} ({c['circuit_type'][:5]}) | "
-         f"causal {c['causal_drop']:.3f} | labels_ok {rec['pool_label_correct']:.3f} | "
+         f"causalL1 {c['causal_drop_L1']:.3f}/{c.get('causal_drop_L1_mean', float('nan')):.3f}m | "
+         f"labels_ok {rec['pool_label_correct']:.3f} | "
          f"retries {rec['retries']}{'' if rec['converged'] else ' NOT-CONVERGED'}")
     if "cond_diversity" in rec:
         s += (f" | condH {rec['cond_diversity']['cond_entropy']:.3f} | "
               f"slotH {rec['slot']['slot_entropy']:.3f} | "
-              f"off {rec['cond_diversity']['off_context']:.3f}")
+              f"off {rec['cond_diversity']['off_context']:.4f}")
+    if "selfgen_wellformed" in rec:
+        s += f" | wellformed {rec['selfgen_wellformed']:.3f}"
     print(s, flush=True)
