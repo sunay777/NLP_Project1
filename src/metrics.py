@@ -7,6 +7,7 @@ distribution and its effective support; both shrink as the model collapses.
 import math
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
 @torch.no_grad()
@@ -28,6 +29,31 @@ def query_perplexity(model, batch):
     logp = torch.log_softmax(logits[rows, batch["query_pos"]], dim=-1)
     nll = -logp[rows, batch["query_tgt"]].mean().item()
     return math.exp(nll)
+
+
+@torch.no_grad()
+def supervised_loss(model, batch):
+    """Mean CE over every supervised position (the training objective) -> the
+    validation / test loss the brief asks for."""
+    model.eval()
+    logits = model(batch["idx"])
+    V = logits.shape[-1]
+    return F.cross_entropy(logits.reshape(-1, V), batch["targets"].reshape(-1),
+                           ignore_index=-100).item()
+
+
+@torch.no_grad()
+def query_nll_all(model, batch, cfg):
+    """NLL of the label at ALL K query positions (query_perplexity uses only the
+    first). Returns (mean NLL, perplexity, per-query-slot NLL list)."""
+    model.eval()
+    K = cfg.n_pairs
+    qp = list(range(2 * K, 4 * K, 2))
+    logp = torch.log_softmax(model(batch["idx"])[:, qp], dim=-1)          # (B,K,V)
+    tgt = batch["targets"][:, qp]
+    nll = -logp.gather(-1, tgt[..., None]).squeeze(-1)                    # (B,K)
+    m = nll.mean().item()
+    return m, math.exp(m), nll.mean(0).tolist()
 
 
 @torch.no_grad()
@@ -99,10 +125,29 @@ def conditional_diversity(model, batch, cfg):
     mass = in_ctx.sum(1)
     q = (in_ctx / mass[:, None]).clamp_min(1e-12)
     H = -(q * q.log()).sum(1)
+    # true p(sq2 | context): uniform over the K symbols, or Zipfian (cfg.sq2_zipf)
+    from .data import sq2_weights
+    alpha = getattr(cfg, "sq2_zipf", 0.0)
+    pt = torch.as_tensor(sq2_weights(classes.cpu().numpy(), alpha) if alpha > 0
+                         else np.full(tuple(classes.shape), 1.0 / K),
+                         dtype=p.dtype, device=p.device)                # (B,K)
+    Ht = -(pt * pt.log()).sum(1)
+    # KL(p_true || p_model) over the full vocabulary (p_true is 0 off-context, so
+    # off-context mass enters through the in-context terms' deficit)
+    kl = (pt * (pt.log() - in_ctx.clamp_min(1e-12).log())).sum(1)
+    # tail: model/true probability of the RAREST in-context symbol (highest id)
+    rare = classes.argmax(1, keepdim=True)
+    tail_ratio = (in_ctx.gather(1, rare) / pt.gather(1, rare)).squeeze(1)
+    head = classes.argmin(1, keepdim=True)
+    head_ratio = (in_ctx.gather(1, head) / pt.gather(1, head)).squeeze(1)
     return {
         "cond_entropy": (H.mean() / math.log(K)).item(),
         "cond_entropy_p10": (torch.quantile(H, 0.10) / math.log(K)).item(),
+        "cond_entropy_true": (Ht.mean() / math.log(K)).item(),
         "off_context": (1 - mass).mean().item(),
+        "kl_true": kl.mean().item(),
+        "tail_ratio": tail_ratio.mean().item(),
+        "head_ratio": head_ratio.mean().item(),
     }
 
 

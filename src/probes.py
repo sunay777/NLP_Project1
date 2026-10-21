@@ -26,6 +26,9 @@ Robust circuit probe (circuit_probe), computed over ALL K query positions:
     circuit_type     'canonical' | 'shifted' (which pattern the best head uses)
     ablation_acc     query-label accuracy with the induction set zero-ablated
     causal_drop      unablated accuracy - ablation_acc           (causal evidence)
+    causal_drop_mean / causal_drop_L1_mean   the same with MEAN-ablation (head
+                     output -> its per-position mean over the batch), the less
+                     off-distribution standard; per_head[*].mean_abl_drop too
 
   Variant-agnostic scalars (added after finding a third, ELIMINATION circuit):
     ablate_L1_acc    accuracy with ALL final-layer heads zero-ablated
@@ -103,21 +106,51 @@ def match_positions(idx, K):
     return 2 * slot, 2 * slot + 1
 
 
-def ablate_heads(model, cfg, heads):
-    """Zero-ablate (layer, head) outputs via a pre-hook on attn.proj.
-    Returns hook handles; call .remove() on each to restore."""
+def ablate_heads(model, cfg, heads, means=None):
+    """Ablate (layer, head) outputs via a pre-hook on attn.proj.
+    means=None -> zero-ablation; means={layer: (T, d_model) tensor} from
+    head_means() -> mean-ablation (the head's output is replaced by its
+    per-position mean over a reference batch, which keeps the residual stream
+    on-distribution). Returns hook handles; call .remove() on each to restore."""
     dh = cfg.d_model // cfg.n_heads
     hooks = []
     for l in sorted(set(l for l, _ in heads)):
         hs = [h for ll, h in heads if ll == l]
+        mu = None if means is None else means[l]
 
-        def pre(mod, inp, hs=hs):
+        def pre(mod, inp, hs=hs, mu=mu):
             x = inp[0].clone()
+            T = x.shape[1]
             for h in hs:
-                x[..., h * dh:(h + 1) * dh] = 0
+                sl = slice(h * dh, (h + 1) * dh)
+                x[..., sl] = 0 if mu is None else mu[:T, sl].to(x.dtype)
             return (x,)
         hooks.append(model.blocks[l].attn.proj.register_forward_pre_hook(pre))
     return hooks
+
+
+@torch.no_grad()
+def head_means(model, batch):
+    """Per-layer, per-position mean of the concatenated head outputs (the input
+    of attn.proj) over `batch` -> {layer: (T, d_model)} for mean-ablation."""
+    model.eval()
+    store, hooks = {}, []
+    for l, blk in enumerate(model.blocks):
+        def pre(mod, inp, l=l):
+            store[l] = inp[0].mean(0)
+        hooks.append(blk.attn.proj.register_forward_pre_hook(pre))
+    model(batch["idx"])
+    for h in hooks:
+        h.remove()
+    return store
+
+
+def _ablated_acc(model, batch, cfg, heads, means=None):
+    hk = ablate_heads(model, cfg, heads, means) if heads else []
+    acc = query_label_accuracy(model, batch, cfg)
+    for x in hk:
+        x.remove()
+    return acc
 
 
 @torch.no_grad()
@@ -160,10 +193,9 @@ def circuit_probe(model, batch, cfg, set_threshold=0.35):
     best = max(per_head, key=lambda r: r["copy"])
     induction_set = [(last, r["head"]) for r in per_head if r["copy"] > set_threshold]
     acc = query_label_accuracy(model, batch, cfg)
-    hk = ablate_heads(model, cfg, induction_set) if induction_set else []
-    abl = query_label_accuracy(model, batch, cfg)
-    for x in hk:
-        x.remove()
+    abl = _ablated_acc(model, batch, cfg, induction_set)
+    means = head_means(model, batch)
+    abl_mean = _ablated_acc(model, batch, cfg, induction_set, means)
 
     # layer-0 support: canonical needs t-1 at labels; shifted needs t-2 at symbols
     a0 = attns[0]
@@ -172,10 +204,12 @@ def circuit_probe(model, batch, cfg, set_threshold=0.35):
     prev_lab = a0[:, :, lab_t, lab_t - 1].mean(dim=(0, 2))          # (H,)
     prev2_sym = a0[:, :, sym_t, sym_t - 2].mean(dim=(0, 2))         # (H,)
 
-    hk = ablate_heads(model, cfg, [(last, h) for h in range(len(per_head))])
-    abl_l1 = query_label_accuracy(model, batch, cfg)
-    for x in hk:
-        x.remove()
+    all_l1 = [(last, h) for h in range(len(per_head))]
+    abl_l1 = _ablated_acc(model, batch, cfg, all_l1)
+    abl_l1_mean = _ablated_acc(model, batch, cfg, all_l1, means)
+    # per-head mean-ablation drop in the final layer (which heads are load-bearing)
+    for r in per_head:
+        r["mean_abl_drop"] = acc - _ablated_acc(model, batch, cfg, [(last, r["head"])], means)
     ov = ov_copy_scores(model, cfg)[last]
     for r in per_head:
         r["ov_copy"] = ov[r["head"]]
@@ -190,10 +224,12 @@ def circuit_probe(model, batch, cfg, set_threshold=0.35):
         "circuit_type": ctype,
         "ablate_L1_acc": abl_l1,
         "causal_drop_L1": acc - abl_l1,
+        "causal_drop_L1_mean": acc - abl_l1_mean,
         "induction_set": [h for _, h in induction_set],
         "query_acc_all": acc,
         "ablation_acc": abl,
         "causal_drop": acc - abl,
+        "causal_drop_mean": acc - abl_mean,
         "prev_token_best": prev_lab.max().item(),
         "prev2_token_best": prev2_sym.max().item(),
         "per_head": per_head,

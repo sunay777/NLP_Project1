@@ -65,11 +65,16 @@ def train_model(cfg, sampler, val_sampler=None, probe_batch=None, log=True):
                 "query_acc": metrics.query_accuracy(model, vb),
                 "query_ppl": metrics.query_perplexity(model, vb),
             }
+            if val_sampler is not None:
+                # held-out loss on the supervised positions + NLL over ALL K queries
+                rec["val_loss"] = metrics.supervised_loss(model, vb)
+                rec["val_query_nll_all"] = metrics.query_nll_all(model, vb, cfg)[0]
             if probe_batch is not None:
                 rec["induction"] = probes.induction_strength(model, probe_batch, cfg)
             history.append(rec)
             if log:
                 ind = f" | induction={rec['induction']:.2f}" if "induction" in rec else ""
-                print(f"  step {step:5d} | loss {rec['train_loss']:.4f} | "
+                vl = f" | val_loss {rec['val_loss']:.4f}" if "val_loss" in rec else ""
+                print(f"  step {step:5d} | loss {rec['train_loss']:.4f}{vl} | "
                       f"query_acc {rec['query_acc']:.3f} | ppl {rec['query_ppl']:.2f}{ind}")
     return model, history
