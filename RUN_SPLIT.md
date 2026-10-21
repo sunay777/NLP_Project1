@@ -1,7 +1,9 @@
 # Running the v2 queue on two Macs (3/5 Matthew, 2/5 Sunay)
 
-The v2 queue (`experiments/jobs_v2.py`, 281 jobs, 3107 units; 1 unit = one 6000-step
-extended generation) is split by experiment name between two Macs. Every job is an
+The v2 queue (`experiments/jobs_v2.py`, 311 jobs, 3407 units; 1 unit = one 6000-step
+extended generation) is split by experiment name between two Macs. The count includes
+30 temperature jobs at the pre-registered critical fractions (λ* ± 0.1 for T = 1.3 and
+1.6), which the queue only adds when `paper/PREDICTION.json` is present. Every job is an
 independent training run that writes its own `results/v2/<experiment>/rf<λ>_s<seed>.*`
 files, so the two halves never touch the same file. Setup is the same as in
 [RUN_V2.md](RUN_V2.md); only the `start` step differs.
@@ -12,13 +14,14 @@ Deadline: **27 Oct 2026, 17:00**.
 
 | | Matthew's Mac | Sunay's Mac |
 |---|---|---|
-| Share | **1841 units, 180 jobs (59%)** | **1266 units, 101 jobs (41%)** |
-| Stage 1 (headline) | all of it: `main_base`, `main_ext` (seeds 0-7), `temp_T0.7/1.3/1.6`, `pulse_ext`, `pulse_base` | none |
-| Stage 2 | `scrub_offctx`, `scrub_labels`, `accumulate`, `fulllm_synthctx` | `fulllm_promptreal`, `pool5k`, `pool80k`, `zipf1`, `zipf2` |
+| Share | **2021 units, 200 jobs (59%)** | **1386 units, 111 jobs (41%)** |
+| Stage 1 (headline) | all of it: `main_base`, `main_ext` (seeds 0-7), `temp_T0.7/1.3/1.6` (incl. the λ* points), `pulse_ext`, `pulse_base` | none |
+| Stage 2 | `scrub_offctx`, `scrub_labels`, `accumulate` | `fulllm_promptreal`, `fulllm_synthctx`, `pool5k`, `pool80k`, `zipf1`, `zipf2` |
 | Stage 3 | `main_ext` (seeds 8-9) | `arch_L1/L2d128/L2mlp/L3/L4`, `task_K6`, `task_S32` |
-| `--only` filter | `main_ pulse temp scrub accumulate fulllm_synthctx` | `fulllm_promptreal pool zipf arch task` |
+| `--only` filter | `main_ pulse temp scrub accumulate` | `fulllm pool zipf arch task` |
 
-Checked with `experiments/jobs_v2.py`: the two filters overlap on 0 jobs and cover all 281.
+Checked with `experiments/jobs_v2.py` (with `paper/PREDICTION.json` present): the two
+filters overlap on 0 jobs and cover all 311.
 Matthew's Mac takes all of stage 1, so the headline results do not depend on the second Mac.
 
 ## What is running on Matthew's Mac
@@ -28,9 +31,9 @@ Matthew's Mac takes all of stage 1, so the headline results do not depend on the
   Sunay's calibration was pushed. They are kept as a reproducibility check in
   `results/v2/temperature_calib_rerun_matthew/` (local only, not committed).
   The pre-registration used is Sunay's committed `paper/PREDICTION.json` / `.md`.
-- The queue, started with Matthew's filter below. Measured speed on this Mac is about
-  6 minutes per generation per core, so its share takes roughly **18-21 hours**
-  (stage 1 runs first).
+- The queue, started at 19:15 on 21 Oct with Matthew's filter below, on 9 workers.
+  Measured speed on this Mac is about 6 minutes per generation per core, so its share
+  takes roughly **22-25 hours** (stage 1 runs first and is most of it).
 
 ## Commands
 
@@ -59,21 +62,23 @@ pgrep -fl experiments.run_queue
 ### Start: Matthew's Mac
 
 ```bash
-mkdir -p results/v2/_queue && nohup .venv/bin/python -m experiments.run_queue --only main_ pulse temp scrub accumulate fulllm_synthctx >> results/v2/_queue/queue.log 2>&1 &
+mkdir -p results/v2/_queue && nohup .venv/bin/python -m experiments.run_queue --only main_ pulse temp scrub accumulate >> results/v2/_queue/queue.log 2>&1 &
 ```
 
 ### Start: Sunay's Mac
 
 ```bash
-mkdir -p results/v2/_queue && nohup .venv/bin/python -m experiments.run_queue --only fulllm_promptreal pool zipf arch task >> results/v2/_queue/queue.log 2>&1 &
+mkdir -p results/v2/_queue && nohup .venv/bin/python -m experiments.run_queue --only fulllm pool zipf arch task >> results/v2/_queue/queue.log 2>&1 &
 ```
 
-Do not use plain `./run_v2.sh start` on either Mac: it runs all 281 jobs and would
+Do not use plain `./run_v2.sh start` on either Mac: it runs all 311 jobs and would
 duplicate the other Mac's share.
 
 ### While it runs (both Macs)
 
-- Progress and ETA: `./run_v2.sh status`
+- Progress: `./run_v2.sh status`. Its job counts and remaining units cover **all 311
+  jobs**, including the other Mac's share, so on each Mac it never reaches "done" and its
+  remaining-units figure is too high. The `running:` lines show this Mac's own jobs.
 - Pause: `./run_v2.sh stop`. To resume, rerun the same **Start** command for that Mac.
   Finished jobs are kept; only the jobs in progress restart.
 - A job that fails is retried once automatically; `status` lists anything marked `FAILED`
