@@ -14,6 +14,7 @@ kept awake with caffeinate while the queue runs.
   python -m experiments.run_queue                   # run everything (stages 1 -> 3)
   python -m experiments.run_queue --stages 1        # only the core stage
   python -m experiments.run_queue --status          # progress + ETA (from another terminal)
+  python -m experiments.run_queue --status --only pool zipf   # progress of one Mac's share
   python -m experiments.run_queue --workers 10      # override the worker count
 """
 import argparse
@@ -60,8 +61,8 @@ def fmt_h(s):
     return f"{s / 3600:.1f} h"
 
 
-def status():
-    J = jobs()
+def status(only=None):
+    J = [j for j in jobs() if not only or any(o in j["name"] for o in only)]
     done = [j for j in J if is_done(j)]
     st = json.load(open(STATUS)) if os.path.exists(STATUS) else {}
     rate = st.get("sec_per_unit")
@@ -180,7 +181,7 @@ def main():
     ap.add_argument("--dry_run", action="store_true")
     a = ap.parse_args()
     if a.status:
-        return status()
+        return status(a.only)
     if a.benchmark:
         print(f"benchmarking {a.workers} parallel workers (about 1-2 minutes)...")
         spu, per_gen = benchmark(a.workers)

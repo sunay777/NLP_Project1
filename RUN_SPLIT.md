@@ -76,9 +76,9 @@ duplicate the other Mac's share.
 
 ### While it runs (both Macs)
 
-- Progress: `./run_v2.sh status`. Its job counts and remaining units cover **all 311
-  jobs**, including the other Mac's share, so on each Mac it never reaches "done" and its
-  remaining-units figure is too high. The `running:` lines show this Mac's own jobs.
+- Progress and ETA for this Mac's share only: add the Start command's filter, e.g.
+  `.venv/bin/python -m experiments.run_queue --status --only fulllm pool zipf arch task`.
+  Plain `./run_v2.sh status` counts all 311 jobs, including the other Mac's share.
 - Pause: `./run_v2.sh stop`. To resume, rerun the same **Start** command for that Mac.
   Finished jobs are kept; only the jobs in progress restart.
 - A job that fails is retried once automatically; `status` lists anything marked `FAILED`
