@@ -14,8 +14,8 @@ PY=.venv/bin/python
 LOG=results/v2/_queue/queue.log
 case "${1:-help}" in
   setup)
-    SYS=$(command -v python3.12 || command -v python3.13 || command -v python3.11 || command -v python3)
-    "$SYS" -c 'import sys; assert sys.version_info >= (3, 10), "need Python >= 3.10, have " + sys.version' 
+    SYS=$(command -v python3.12 || command -v python3.13 || command -v python3)
+    "$SYS" -c 'import sys; assert (3, 12) <= sys.version_info < (3, 14), "need Python 3.12 or 3.13 (numpy 2.5 needs >= 3.12), have " + sys.version' 
     [ -d .venv ] || "$SYS" -m venv .venv
     $PY -m pip install --upgrade pip -q
     $PY -m pip install -r requirements.txt -q

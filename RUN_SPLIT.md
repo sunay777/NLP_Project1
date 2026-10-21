@@ -50,7 +50,7 @@ git pull
 ./run_v2.sh setup
 ```
 
-`setup` must end with `23/23 job types ran`. It needs Python 3.10-3.13; if only a newer
+`setup` must end with `23/23 job types ran`. It needs Python 3.12 or 3.13 (numpy 2.5 needs >= 3.12); if only an older or newer
 Python is installed, `uv python install 3.12` provides one without admin rights.
 
 Make sure no queue is already running (this should print nothing):

@@ -2,7 +2,7 @@
 
 These steps run every v2 experiment (about 280 training runs) on one Mac and send the results back. You don't need to understand the project. Each step is one command in Terminal.
 
-**Needs:** an Apple-silicon Mac (M1 or newer), Python 3.10–3.13 (`python3 --version` to check), about 2 GB of free disk space, and the charger.
+**Needs:** an Apple-silicon Mac (M1 or newer), Python 3.12 or 3.13 (`python3.12 --version` to check; numpy 2.5 needs ≥ 3.12), about 2 GB of free disk space, and the charger.
 
 ## 1. Get the code and set it up (about 5 minutes)
 
