@@ -248,14 +248,27 @@ def _pool_stats(data, cfg):
 
 
 @torch.no_grad()
-def _causal_L1(model, batch, cfg):
+@torch.no_grad()
+def causal_by_layer(model, batch, cfg):
+    """Accuracy lost when ALL heads of one layer are zero-ablated, for each layer."""
     acc = probes.query_label_accuracy(model, batch, cfg)
-    last = cfg.n_layers - 1
-    hk = probes.ablate_heads(model, cfg, [(last, h) for h in range(cfg.n_heads)])
-    abl = probes.query_label_accuracy(model, batch, cfg)
-    for x in hk:
-        x.remove()
-    return acc - abl
+    out = []
+    for l in range(cfg.n_layers):
+        hk = probes.ablate_heads(model, cfg, [(l, h) for h in range(cfg.n_heads)])
+        out.append(acc - probes.query_label_accuracy(model, batch, cfg))
+        for x in hk:
+            x.remove()
+    return out
+
+
+def _causal_L1(model, batch, cfg):
+    """Gate criterion: the largest accuracy drop from ablating any attention layer
+    AFTER layer 0 (the layer that can host the induction head). For the default
+    2-layer model this is exactly layer 1. Deeper models can place the induction
+    head in a middle layer, so checking only the last layer would reject working
+    circuits (it did, for 4 layers, before this fix)."""
+    drops = causal_by_layer(model, batch, cfg)
+    return max(drops[1:]) if len(drops) > 1 else drops[0]
 
 
 def _record(g, model, cfg, eval_rng, device, eval_batch, extra):
@@ -273,6 +286,7 @@ def _record(g, model, cfg, eval_rng, device, eval_batch, extra):
         "test_loss": metrics.supervised_loss(model, test),         # real held-out data
         "induction": circ["induction_legacy"],                     # legacy probe
         "circuit": circ,
+        "causal_by_layer": causal_by_layer(model, test, cfg),      # any depth
     }
     if cfg.mode == "extended":
         rec["cond_diversity"] = metrics.conditional_diversity(model, test, cfg)
