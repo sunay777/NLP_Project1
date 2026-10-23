@@ -109,11 +109,9 @@ def main():
         arr = series(runs, f, lambda r: r.get("query_nll_all", np.log(r["query_ppl"])))
         points(ax[1], np.arange(arr.shape[1]), arr, colour(f, fracs), MARKERS[i])
     ax[1].set_yscale("log")
-    ax[1].set_title("(b) Query NLL")
     ax[1].set_ylabel("NLL (log scale)")
     accs = [rec["query_acc_all"] for r in runs for rec in r["records"]]
-    ax[1].text(0.97, 0.03, f"acc. {min(accs):.3f}-{max(accs):.3f}",
-               transform=ax[1].transAxes, ha="right", va="bottom", fontsize=7, color=INK2)
+    ax[1].set_title(f"(b) Query NLL, acc$\\geq${min(accs):.2f}")
 
     # (c) variant-agnostic causal dependence on layer 1
     key = None

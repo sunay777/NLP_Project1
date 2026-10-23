@@ -218,11 +218,14 @@ def do_temperature():
     ax[0].set_xlabel("real-data fraction λ")
     ax[0].set_ylabel("inheritance gain a(T)(1-λ)")
     ax[0].set_title("(a) Gain per (T, λ)")
-    ax[0].legend(fontsize=6.5)
+    ax[0].legend(fontsize=6.5, loc="lower left", bbox_to_anchor=(0.0, 0.08))
     for i, T in enumerate(Ts):
         c = plt.cm.viridis(i / max(1, len(Ts) - 1))
         ax[1].scatter(offs[i], hs[i], color=c, s=18, zorder=3)
-        ax[1].annotate(f"T={T:g}", (offs[i], hs[i]), textcoords="offset points", xytext=(4, 2),
+        # T=1.3 and T=1.6 land close together: put every other label below-left
+        below = i % 2 == 0 and i > 0
+        ax[1].annotate(f"T={T:g}", (offs[i], hs[i]), textcoords="offset points",
+                       xytext=(-4, -9) if below else (4, 2), ha="right" if below else "left",
                        fontsize=7)
     ax[1].set_xlabel("off-context mass (gen 9, λ=0)")
     ax[1].set_ylabel("conditional entropy of sq2")
