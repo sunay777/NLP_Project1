@@ -80,10 +80,11 @@ Facts for the checklist (check each against the actual question wording):
   Broader impact: model collapse and data poisoning (the poison-pulse experiment) matter for models
   trained on web data that contains model output.
 
-AI ethics statement: **every one of the 45 commits in the repo is tagged
-`Co-Authored-By: Claude`.** Both Sunay and Matthew used Claude (Anthropic, through Claude Code) to
-write code, run and analyse experiments, and draft and edit the abstract. Say this plainly. The
-course allows AI use, but the declaration has to be accurate and the group takes responsibility for
+AI ethics statement: **both Sunay and Matthew used Claude (Anthropic, through Claude Code) for
+essentially all of the project's commits:** writing code, running and analysing experiments, and
+drafting and editing the abstract. Say this plainly. The `Co-Authored-By: Claude` lines were removed
+from the commit messages on 23 Oct, but that does not change what has to be declared. The course
+allows AI use; the declaration has to be accurate, and the group takes responsibility for
 everything submitted.
 
 ## Task 3: rewrite the abstract in our own words
