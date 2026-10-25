@@ -11,6 +11,7 @@ import numpy as np
 from experiments.fit_recursion import load_runs
 
 R = "results/v2"
+A = f"{R}/analysis"
 
 
 def runs(name):
@@ -85,7 +86,9 @@ def main():
     out["scrub_a"] = {"offctx_removed": s["offctx"]["law_fit_scrubbed"]["a"],
                       "wrong_labels_removed": s["labels"]["law_fit_scrubbed"]["a"],
                       "main": oc["pooled"]["a"]}
-    out["accumulate_a"] = json.load(open(f"{R}/analysis/accumulate.json"))["law_fit_accumulate"]["a"]
+    out["scrub_r2"] = {"offctx_removed": s["offctx"]["law_fit_scrubbed"]["r2"],
+                       "wrong_labels_removed": s["labels"]["law_fit_scrubbed"]["r2"]}
+    out["accumulate_a"] =json.load(open(f"{R}/analysis/accumulate.json"))["law_fit_accumulate"]["a"]
     ps = json.load(open(f"{R}/analysis/poolsize.json"))
     out["poolsize_a"] = {k: ps[k]["a"] for k in ps}
     sc = json.load(open(f"{R}/analysis/scale.json"))
@@ -100,6 +103,55 @@ def main():
     out["full_lm_lambda0_gen9"] = {c: {k: sx[c][f"{k}_l0"]["mean"][-1] for k in
                                        ("acc_all", "causal_L1_mean", "off_context", "query_nll")}
                                    for c in sx}
+
+    by_lam = {}
+    for r in main_ext:
+        by_lam.setdefault(r["rf"], []).append(r["records"])
+    gen_means = [float(np.mean([rs[g]["circuit"]["causal_drop_L1_mean"] for rs in rl]))
+                 for rl in by_lam.values() for g in range(len(rl[0]))]
+    out["causal_L1_per_gen_mean_range"] = [min(gen_means), max(gen_means)]
+    first_all = [r["records"][0] for r in main_ext]
+    out["gen0_main_ext"] = {
+        "query_acc_all": ms([x["query_acc_all"] for x in first_all]),
+        "prev_token_score": ms([x["circuit"]["prev_token_best"] for x in first_all]),
+        "induction_score": ms([x["circuit"]["induction_best"] for x in first_all]),
+    }
+
+    base = runs("main_base")
+    b0 = [r["records"] for r in base if r["rf"] == 0.0]
+    bfit = json.load(open(f"{A}/main.json"))["main_base"]["syn_wrong_label"]["pooled"]
+    out["base_lambda0"] = {
+        "n_runs_main_base": len(base),
+        "final_generation": len(b0[0]) - 1,
+        "query_acc_all_gen0": ms([rs[0]["query_acc_all"] for rs in b0]),
+        "query_acc_all_final": ms([rs[-1]["query_acc_all"] for rs in b0]),
+        "query_nll_gen0": ms([rs[0]["query_nll_all"] for rs in b0]),
+        "query_nll_final": ms([rs[-1]["query_nll_all"] for rs in b0]),
+        "pool_syn_wrong_label_gen1": ms([rs[1]["pool_syn_wrong_label"] for rs in b0]),
+        "pool_syn_wrong_label_final": ms([rs[-1]["pool_syn_wrong_label"] for rs in b0]),
+        "law_syn_wrong_label": {"a": bfit["a"], "r2": bfit["r2"], "n": bfit["n"]},
+    }
+
+    out["runaway_lambda0"] = {}
+    for T in ("1.3", "1.6"):
+        rl = [r["records"] for r in runs(f"temp_T{T}") if r["rf"] == 0.0]
+        G = min(len(x) for x in rl)
+        def per_gen(f):
+            return [float(np.mean([f(x[g]) for x in rl])) for g in range(G)]
+        out["runaway_lambda0"][T] = {
+            "n": len(rl),
+            "query_acc_all": per_gen(lambda x: x["query_acc_all"]),
+            "causal_L1_mean": per_gen(lambda x: x["circuit"]["causal_drop_L1_mean"]),
+            "off_context": per_gen(lambda x: x["cond_diversity"]["off_context"]),
+            "pool_label_correct": per_gen(lambda x: x["pool_label_correct"]),
+        }
+
+    pred = json.load(open("paper/PREDICTION.json"))["temperatures"]
+    out["prereg_calibration"] = {T: {"a": v["a"], "lambda_star": v["lambda_star"]} for T, v in pred.items()}
+
+    out["poolsize_off_context_lambda0_final"] = {
+        name: ms([r["records"][-1]["cond_diversity"]["off_context"] for r in runs(name) if r["rf"] == 0.0])
+        for name in ("pool5k", "pool80k")}
 
     json.dump(out, open(f"{R}/analysis/abstract_numbers.json", "w"), indent=1, default=float)
     print(f"-> {R}/analysis/abstract_numbers.json")

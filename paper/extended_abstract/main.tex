@@ -21,12 +21,20 @@
 \usepackage{mathtools}
 \usepackage{amsthm}
 \usepackage[labelfont=bf, margin=0.8cm, font=sf]{caption}
+\usepackage{pdfpages}       % appended signed AI declaration
 
-\title{Collapse Around the Circuit: Induction Heads Survive Recursive Training While Their Errors Are Inherited}
+% NeurIPS 2024 checklist answer macros (from neurips_2024.sty)
+\newcommand{\answerYes}[1][]{\textcolor{blue}{[Yes] #1}}
+\newcommand{\answerNo}[1][]{\textcolor{orange}{[No] #1}}
+\newcommand{\answerNA}[1][]{\textcolor{gray}{[NA] #1}}
+\newcommand{\answerTODO}[1][]{\textcolor{red}{\bf [TODO]}}
+\newcommand{\justificationTODO}[1][]{\textcolor{red}{\bf [TODO]}}
 
-\author{{\large \bf Matthew Purkiss (2697424) }
-  \AND {\large \bf Sunay Master (2677874)}
-  \AND {\large \bf Harshil Vallabh (2656158)} }
+\title{Collapse Around the Circuit: Induction Heads Survive Bounded Model Collapse While Their Errors Are Inherited}
+
+\author{{\large \bf Matthew Purkiss (2697424)} \\ University of the Witwatersrand, 1 Jan Smuts Ave,\\ Braamfontein, Johannesburg, 2000, South Africa
+  \AND {\large \bf Sunay Master (2677874)} \\ University of the Witwatersrand, 1 Jan Smuts Ave,\\ Braamfontein, Johannesburg, 2000, South Africa
+  \AND {\large \bf Harshil Vallabh (2656158)} \\ University of the Witwatersrand, 1 Jan Smuts Ave,\\ Braamfontein, Johannesburg, 2000, South Africa}
 
 
 \begin{document}
@@ -41,7 +49,7 @@
 {
 \bf
 \looseness=-1
-We study model collapse inside a mechanism we can read: the induction circuit of \citet{singh2024needs}. A two-layer attention-only transformer learns an in-context symbol task and is retrained for up to 20 generations on pools that mix a fraction $\lambda$ of real data with data sampled from its predecessor. Across 311 runs the circuit survives: query accuracy never falls below 0.979 and ablating layer 1 costs 0.69--0.74 accuracy at every $\lambda$ and generation. What degrades is the model's free generative choice. The probability it places on symbols absent from the context follows a two-parameter inheritance law, $m_{g+1} = a(1-\lambda)m_g + \varepsilon$ ($a = 0.951$, $R^2 = 0.994$), which predicts held-out real-data fractions. Removing those off-context samples from the synthetic pools cuts the gain $a$ to 0.19, and training-data attribution finds them 12--23$\times$ over-represented among the most influential examples: the errors are inherited through the data, not produced by a damaged circuit. A pre-registered extension of the law to higher sampling temperatures failed four of five tests. Runaway collapse occurred only with no real data at all, so real data protects more strongly than the linear law predicts.
+We study model collapse inside a mechanism we can read: the induction circuit of \citet{singh2024needs}. A two-layer attention-only transformer learns an in-context symbol task and is retrained for up to 20 generations on pools that mix a fraction $\lambda$ of real data with data sampled from its predecessor. In the main sweep the circuit survives: test accuracy never falls below 0.979 and ablating layer 1 costs 0.66--0.76 accuracy in every generation. What degrades is the model's free generative choice. The probability it places on symbols absent from the context follows a two-parameter inheritance law, $m_{g+1} = a(1-\lambda)m_g + \varepsilon$ ($a = 0.951$, $R^2 = 0.994$), which predicts held-out real-data fractions. Removing those off-context samples from the synthetic pools cuts the gain $a$ to 0.19, and training-data attribution finds them 12--23$\times$ over-represented among the most influential examples: the errors are carried by specific synthetic samples, not by a damaged circuit. A pre-registered extension of the law to higher sampling temperatures failed four of five tests. Collapse ran away only without real data, and the circuit then broke once correct labels in the training pool fell to chance level.
 }
 \begin{quote}
 \small
@@ -59,11 +67,11 @@ Attention patterns suggest a circuit but are not causal evidence, so we follow \
 
 \section{Methods}
 \looseness=-1
-\textbf{Task and model.} Each sequence gives $K{=}4$ symbols (from 16) a random label (from 6). A study block lists the pairs and a query block repeats the symbols in an independent order; the model predicts each label, which only content-based matching can solve. The model also freely generates one more in-context symbol ($sq2$), which is drawn uniformly and is the degree of freedom that can collapse. The model has 2 attention-only layers of 4 heads ($d{=}64$, rotary positions, tied embeddings, cosine learning-rate decay). Hyper-parameters were chosen on validation loss and confirmed once on a held-out test seed.
+\textbf{Task and model.} Each sequence gives $K{=}4$ symbols (from 16) a random label (from 6). A study block lists the pairs and a query block repeats the symbols in an independent order; the model predicts each label, which only content-based matching can solve. Unlike \citet{singh2024needs} (two pairs, image symbols), we use tokens and query every symbol in shuffled order, so no positional shortcut works. The \emph{base} model predicts only the query labels. The \emph{extended} model then freely generates one more in-context symbol ($sq2$, uniform over the four in real data) and its label; $sq2$ is the degree of freedom that can collapse. The model has 2 attention-only layers of 4 heads ($d{=}64$, learned and rotary positions, tied embeddings, cosine learning-rate decay; 35k parameters). Hyper-parameters were chosen on validation loss and confirmed once on a held-out test seed.
 
-\textbf{Collapse pipeline.} Generation 0 trains on a 20k-sequence real pool. Generation $g$ trains a \emph{fresh} model on a 20k pool with a fraction $\lambda$ of real sequences and the rest sampled from generation $g{-}1$ at temperature $T{=}1$. Prompts stay real and all answers are model-generated (\emph{prompt-real} regime). Each pool is split 90/10 into train and validation; test data is fresh real data. A generation must pass a strict gate (validation accuracy and a causal layer-1 check) or is retrained, which happened 20 times in 680 main-sweep generations with no final failures. We sweep $\lambda \in \{0, 0.1, 0.25, 0.5, 1\}$ with 10 seeds, for 12 generations (20 at $\lambda{=}0$).
+\textbf{Collapse pipeline.} Generation 0 trains on a 20k-sequence real pool. Generation $g$ trains a \emph{fresh} model on a 20k pool with a fraction $\lambda$ of real sequences and the rest sampled from generation $g{-}1$ at temperature $T{=}1$. Prompts stay real and all answers are model-generated (\emph{prompt-real} regime). Each pool is split 90/10 into train and validation; test data is fresh real data. A generation must pass a strict gate (validation accuracy and a causal layer-1 check) or is retrained, which happened 20 times in 680 main-sweep generations with no final failures. We sweep $\lambda \in \{0, 0.1, 0.25, 0.5, 1\}$ for 12 generations, with 10 seeds for the extended model (20 generations at $\lambda{=}0$) and 5 for the base model.
 
-\textbf{Metrics.} \emph{Off-context mass}, the probability $p(sq2 \mid \text{context})$ places on symbols not in the context, measures hallucination; query NLL on real data measures calibration. The circuit is measured causally, as the accuracy lost when every layer-1 head is mean-ablated. This is agnostic to how the circuit is implemented, which matters because 5\% of generations use a non-canonical variant that attention probes misread. We fit the inheritance law on $\lambda \in \{0, 0.25, 1\}$ and test it on $\{0.1, 0.5\}$. Interventions remove off-context or wrong-label samples from the synthetic pools, accumulate pools across generations, change the pool size, inject a one-off 5\% label-noise pulse, and vary depth, width and task size.
+\textbf{Metrics.} \emph{Off-context mass}, the probability $p(sq2 \mid \text{context})$ places on symbols not in the context, measures hallucination; query NLL on real data measures confidence. The circuit is measured causally, as the accuracy lost when every layer-1 head is mean-ablated (at most about 0.83, down to chance at 1/6). This is agnostic to how the circuit is implemented, which matters because 5\% of generations use a non-canonical variant that attention probes misread. We fit the inheritance law on $\lambda \in \{0, 0.25, 1\}$ and test it on $\{0.1, 0.5\}$. Interventions remove off-context or wrong-label samples from the synthetic pools, accumulate pools across generations, change the pool size, inject a one-off 5\% label-noise pulse, and vary depth, width and task size.
 
 \textbf{Pre-registration.} From one calibration seed, the law was fitted per temperature $T \in \{0.7, 1.3, 1.6\}$. It predicts a critical fraction $\lambda^* = 1 - 1/a(T)$ whenever $a(T) > 1$. Five pass/fail tests were committed to git before the confirmatory runs (5 seeds per cell).
 
@@ -76,44 +84,106 @@ Attention patterns suggest a circuit but are not causal evidence, so we follow \
 
 \section{Results}
 \looseness=-1
-\textbf{The circuit survives; its outputs do not.} Query accuracy stays $\geq$0.979 in every generation, and the accuracy lost by ablating layer 1 is 0.71 at generation 0 and 0.69--0.74 at the last generation for every $\lambda$ (Figure~\ref{fig:headline}c). Calibration erodes instead: without real data, query NLL rises from 0.006 to 0.030 by generation 19 while accuracy is 0.996 (Figure~\ref{fig:headline}b).
+\textbf{The circuit survives; its outputs do not.} At generation 0 (test accuracy 0.998) a layer-0 head sends 0.79 of each label's attention to the preceding symbol and a layer-1 head 0.93 of each query's attention to its match. Accuracy then stays $\geq$0.979 in every generation, and the accuracy lost by ablating layer 1 is 0.71 at generation 0 and 0.69--0.74 at the last generation for every $\lambda$ (Figure~\ref{fig:headline}c). Confidence erodes instead: without real data, query NLL rises from 0.006 to 0.030 by generation 19 while accuracy is 0.996 (Figure~\ref{fig:headline}b). The base model, with no free choice, shows only this effect: at $\lambda{=}0$ its accuracy stays 1.000 while query NLL rises from 0.0002 to 0.0058 by generation 11.
 
-\textbf{An inheritance law.} Off-context mass grows from 0.013 to 0.138 by generation 19 without real data, and to 0.057, 0.035, 0.022 and 0.012 by generation 11 at $\lambda = 0.1, 0.25, 0.5$ and 1. The law fits all 630 transitions with $a = 0.951$ (95\% CI 0.942--0.959), $\varepsilon = 0.0105$ and $R^2 = 0.994$. Fitted without $\lambda \in \{0.1, 0.5\}$, it predicts them with RMSE 0.003, within one seed SD at 68\% of generations (Figure~\ref{fig:headline}a). It overshoots the plateau: for $\lambda{=}0$ it predicts $m^* = 0.21$, while mass is 0.13 at generations 16--19 and still rising. The gain holds across 3- and 4-layer, MLP and wider models ($a = 0.94$--$1.04$, $R^2 \geq 0.98$).
+\textbf{An inheritance law.} Off-context mass grows from 0.013 to 0.138 by generation 19 without real data, and to 0.057, 0.035, 0.021 and 0.012 by generation 11 at $\lambda = 0.1, 0.25, 0.5$ and 1. The law fits all 630 transitions with $a = 0.951$ (95\% CI 0.942--0.959), $\varepsilon = 0.0105$ and $R^2 = 0.994$. Fitted without $\lambda \in \{0.1, 0.5\}$, it predicts them with RMSE 0.003, within one seed SD at 68\% of generations (Figure~\ref{fig:headline}a). It overshoots the plateau: for $\lambda{=}0$ it predicts $m^* = 0.21$, while mass is 0.13 at generations 16--19 and still rising. The gain holds across 3- and 4-layer, MLP and wider models ($a = 0.94$--$1.04$, $R^2 \geq 0.98$) and is lower on larger tasks (0.84 at $K{=}6$, $R^2 = 0.80$; 0.85 with 32 symbols); a one-layer model cannot learn the task (accuracy 0.64).
 
-\textbf{The errors are inherited through the data.} Removing off-context samples from each synthetic pool cuts the gain from 0.95 to 0.19, while removing wrong labels leaves it at 0.95. Attribution agrees: off-context samples are 12--23$\times$ over-represented among the top 1\% most influential training examples. Accumulating pools lowers the gain to 0.62, and a 5k pool raises it above 1 (1.03 vs 0.91 at 20k). A label-noise pulse decays at the predicted rate with real data (half-life 2.2 vs 2.1 generations at $\lambda{=}0.25$; 0.97 vs 0.93 at 0.5) but far more slowly without it (33 vs 14).
+\textbf{Specific synthetic samples carry the errors.} Removing off-context samples from each synthetic pool cuts the gain from 0.95 to 0.19 (mass stays near $\varepsilon$; $R^2 = 0.05$), while removing wrong labels leaves it at 0.95. Attribution agrees: off-context samples are 12--23$\times$ over-represented among the top 1\% most influential training examples. Accumulating pools lowers the gain to 0.62, and a 5k pool raises it above 1 (1.03 vs 0.91 for the matched 20k runs) and mass runs away to 0.58 without real data. A label-noise pulse decays at the predicted rate with real data (half-life 2.2 vs 2.1 generations at $\lambda{=}0.25$; 0.97 vs 0.93 at 0.5) but far more slowly without it (33 vs 14).
 
 \begin{table}[H]
 \centering
 \captionsetup{type=table, font=sf, width=0.95\linewidth}
 \caption{\looseness=-1 Pre-registered temperature tests (confirmatory seeds 0--4). Only the qualitative prediction (test 5) held.}
-\small
+\footnotesize
 \begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.34\linewidth}@{\hspace{4pt}}l@{\hspace{6pt}}>{\raggedright\arraybackslash}p{0.47\linewidth}@{}}
 \toprule
 Test & Result & Observed ($T = 0.7, 1, 1.3, 1.6$) \\
 \midrule
 1. $a(T)$ rises with $T$ & fail & $a = -0.04, 0.93, 1.14, 1.04$ \\
-2. Runs inside 95\% band & fail & 3 of 12 cells \\
+2. Inside 95\% band & fail & 3 of 12 cells \\
 3. Contracting cells slow & fail & 2 of 3 cells at $T{=}0.7$ (gain $\approx 0$) \\
 4. Runaway iff $a(1{-}\lambda) \geq 1$ & fail & runaway only at $\lambda{=}0$; no seed in the 6 cells with $\lambda > 0$ \\
-5. Higher $T$: more off-context mass, less homogenisation & pass & mass 0.011, 0.079, 0.77, 0.82; entropy 0.40, 0.78, 0.91, 0.93 \\
+5. Higher $T$: more mass, less homogenisation & pass & mass 0.011, 0.079, 0.77, 0.82; entropy 0.40, 0.78, 0.91, 0.93 \\
 \bottomrule
 \end{tabular}
 \label{tab:prereg}
 \end{table}
 
-\textbf{The pre-registered prediction failed.} Higher temperature does raise hallucination and lowers homogenisation (Table~\ref{tab:prereg}, test 5). But the predicted critical fractions ($\lambda^* \approx 0.31$ at $T{=}1.3$, 0.52 at $T{=}1.6$) do not exist. Mass exceeded 0.5 in every seed at $\lambda{=}0$, yet none of the six cells predicted to run away with 20--50\% real data did, in any seed.
+\textbf{The pre-registered prediction failed.} Only the qualitative trade-off held (Table~\ref{tab:prereg}, test 5); the predicted critical fractions ($\lambda^* \approx 0.30$ at $T{=}1.3$, 0.52 at 1.6) do not exist: mass exceeded 0.5 in every seed at $\lambda{=}0$, yet no seed ran away in the six cells with 20--50\% real data predicted to.
+
+\textbf{When collapse runs away, the circuit breaks.} In those runs the share of correct labels in the synthetic pool fell to 0.15 ($T{=}1.3$) and 0.05 ($T{=}1.6$) by generation 9, but the circuit outlasted the labels. At $T{=}1.6$ it was intact at generation 4 with 26\% correct labels (accuracy 0.93, layer-1 effect 0.67) and gone at generation 5 with 15\% (0.37 and 0.06); at $T{=}1.3$ it broke at the same share (0.46 and 0.20). Both breaks came as correct labels fell to chance (1/6).
 
 \section{Discussion}
 \looseness=-1
-In the prompt-real regime, recursive training leaves the induction circuit intact: every self-generated query is still answered by copying from a real context, which re-teaches the same computation. Collapse concentrates in the free choice instead, mainly as off-context hallucination, and its growth is well described by a linear inheritance of errors through the data, which scrubbing and attribution identify causally. The failed pre-registration bounds that account: at high temperature, real data damps errors far more than a constant gain allows, so the law describes collapse locally but does not locate tipping points (its single-seed calibration also underestimated the gain at $T{=}1$: 0.86 vs 0.95). The circuit result needs real prompts: trained on its own full sequences without real data, the model's accuracy falls to 0.88 and its causal layer-1 effect from 0.83 to 0.71 by generation 9. Further limits are the 35k-parameter model, 16 symbols, 5--10 seeds and at most 20 generations. Two lessons carry over: accuracy can hide eroding calibration, and a modest share of real data, or accumulating data, sharply limits what a model inherits.
+In the prompt-real regime, bounded collapse leaves the induction circuit intact: every self-generated query is still answered by copying from a real context, which re-teaches the same computation. Collapse concentrates in the free choice, mainly as off-context hallucination inherited through the off-context samples. The circuit is lost only when copying stops paying, once correct answers are no more common than chance. The failed pre-registration bounds the linear account: at high temperature real data damps errors far more than a constant gain allows, so the law describes collapse locally but does not locate tipping points (its single-seed calibration also underestimated the gain at $T{=}1$: 0.86 vs 0.95). Survival also depends on supervising only the answers: with every token supervised (full language modelling) and no real data, the layer-1 effect falls from 0.83 to 0.71 and accuracy to 0.88 by generation 9, even with real prompts. Further limits are the 35k-parameter model, 16 symbols, 5--10 seeds and at most 20 generations. Two lessons carry over: accuracy can hide eroding confidence, and a modest share of real data, or accumulating data, sharply limits what a model inherits.
 
-\section{Acknowledgements (Not in Page Limit -- you will probably not have one)}
-Computations were performed using High Performance Computing infrastructure provided by the Mathematical Sciences Support Unit at the University of the Witwatersrand.
-
+\onecolumn
 \section{Contribution Statements (Not in Page Limit)}
-TODO: fill in before submission -- all authors must agree on this text.
+\begingroup\setlength{\parindent}{0pt}\setlength{\parskip}{0.3em}\setlength{\itemsep}{0pt}\renewcommand{\itemize}{\begingroup\list{\textbullet}{\setlength{\itemsep}{1pt}\setlength{\parsep}{0pt}\setlength{\topsep}{2pt}}}\renewcommand{\enditemize}{\endlist\endgroup}
 
-Do not forget to include the NeurIPS Checklist and the Wits Science Faculty AI Ethics Form.
+\textbf{Group members:} Sunay Master (2677874), Matthew Purkiss (2697424), Harshil Vallabh (2656158)
+
+\textbf{Project:} \emph{Interpretability of Model Collapse} (working title: \emph{Collapse around the circuit: induction heads under recursive training})
+
+\textbf{Research question.} A small transformer learns the induction-head symbol task of \citet{singh2024needs} and is then trained recursively on data generated by its previous generation \citep{shumailov2024ai}. Does collapse degrade the induction circuit itself, or only what the circuit is asked to produce? How does the fraction of real data mixed into each generation change this, in both the base and the extended version of the task?
+
+\subsection{Division of work}
+
+Each member contributes one third (33.3\%) of the project.
+
+\begin{center}
+\small
+\begin{tabular}{@{}l l >{\raggedright\arraybackslash}p{0.38\textwidth} >{\raggedright\arraybackslash}p{0.32\textwidth}@{}}
+\toprule
+\textbf{Member} & \textbf{Share} & \textbf{Experiments} & \textbf{Writing and admin} \\
+\midrule
+Sunay & 33.3\% & Core implementation and collapse pipeline; A+C sweeps and hyper-parameter selection; temperature test and poison-pulse runs & Method section; project outline and change plan \\
+\addlinespace
+Matthew & 33.3\% & Single-generation analysis: training curves, attention maps, embeddings, convergence and loss floor; extra logging; headline figure & Introduction, Background and Results sections; extended abstract LaTeX; Faculty of Science AI ethics statement \\
+\addlinespace
+Harshil & 33.3\% & Inheritance-law fit; gate audit and statistics; finite-data control run; mechanism analysis of the hallucination & Discussion and limitations; NeurIPS 2024 checklist; README.txt and requirements.txt \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Sunay Master}
+\begin{itemize}
+    \item Build the study$\rightarrow$query task generator (base and extended), the 2-layer transformer, the training loop, and the collapse pipeline (real/synthetic mixing, convergence gate with retries, collision-free seeding).
+    \item Build the circuit probes (previous-token and induction scores, causal head ablation), conditional diversity and off-context mass; run the full sweep over real-data fractions, seeds and both modes; select hyper-parameters.
+    \item Run the pre-registered temperature test of the critical real-data fraction and the poison-pulse experiment, and write the Method section.
+\end{itemize}
+
+\textbf{Matthew Purkiss}
+\begin{itemize}
+    \item Produce the single-generation training curves, attention-map and embedding figures, and check that extended mode converges and reaches its predicted loss floor.
+    \item Add validation loss and all-query perplexity to the logging, add mean-ablation to the probes, and build the composite headline figure.
+    \item Write the extended abstract (Moodle template) including Introduction, Background and Results, and the Faculty of Science AI ethics statement.
+\end{itemize}
+
+\textbf{Harshil Vallabh}
+\begin{itemize}
+    \item Fit the recursion model to the saved results, with held-out fractions as a test, and audit which generations fail a stricter convergence gate.
+    \item Run the control that gives generation 0 the same data budget as later generations, and analyse which heads produce the off-context (hallucinated) probability.
+    \item Write the Discussion and limitations, the NeurIPS 2024 checklist, README.txt and requirements.txt, and check that every number in the abstract traces to a file.
+\end{itemize}
+
+\textbf{Shared by all members}
+\begin{itemize}
+    \item The two-page extended abstract (PDF), the full code, and checking every reference.
+    \item The final contribution statement, which will report any changes to this plan and why.
+\end{itemize}
+
+\subsection{Agreement}
+
+All group members have read and agree to this division of work.
+
+\vspace{0.5em}
+\begin{tabular}{@{}p{0.31\textwidth}p{0.31\textwidth}p{0.31\textwidth}@{}}
+Sunay Master & Matthew Purkiss & Harshil Vallabh \\
+\end{tabular}
+\endgroup
+
+\twocolumn
 
 \bibliographystyle{apacite}
 
@@ -122,5 +192,10 @@ Do not forget to include the NeurIPS Checklist and the Wits Science Faculty AI E
 
 \bibliography{references}
 
+% After the references: the NeurIPS 2024 checklist (.tex from Moodle), then the signed AI declaration.
+\onecolumn
+\input{neurips_checklist}
+% AI declaration, appended when the file is present.
+\IfFileExists{ai_declaration_signed.pdf}{\includepdf[pages=-]{ai_declaration_signed.pdf}}{}
 
 \end{document}

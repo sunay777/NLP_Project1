@@ -219,7 +219,7 @@ Analysis of the ORIGINAL sweep (seconds each, no training):
 New runs (one queue; see RUN_V2.md for running it on another Mac):
   ./run_v2.sh setup        venv + pinned packages + 2-minute smoke test of every job type
   ./run_v2.sh bench        measured ETA for this machine
-  ./run_v2.sh start        all 281 trajectories (experiments/jobs_v2.py; ~3100
+  ./run_v2.sh start        all 311 trajectories (experiments/jobs_v2.py; ~3400
                            extended-generation units, ~30-40 h on a 10-core M4)
   python -m experiments.jobs_v2      prints the job table
 
@@ -233,6 +233,8 @@ Pre-registered temperature test:
       -> paper/PREDICTION.md / .json, committed BEFORE the confirmatory runs
 
 Analysis of the v2 runs (after the queue):
+  python -m experiments.analyse_v2 all          # every experiment -> results/v2/analysis/*.json
+                                                #   (scores the pre-registered tests) + figures
   python -m experiments.fit_recursion --files "results/v2/main_ext/*.json" \
       --out results/v2/recursion_fit_v2.json
   python -m experiments.fit_recursion --files "results/v2/temp_T*/*.json" \
@@ -241,6 +243,12 @@ Analysis of the v2 runs (after the queue):
       --out results/v2/lineage.json             # inherited vs rebuilt circuits (CKA, QK/OV)
   python -m experiments.attribution --dir results/v2/main_ext --fraction 0 \
       --seeds 0 1 2 --gens 2 5 10 --out results/v2/attribution.json   # TracIn via one JVP
+
+Extended abstract (every number and Figure 1; run after the analysis above):
+  python -m experiments.abstract_numbers        -> results/v2/analysis/abstract_numbers.json
+  python -m experiments.plot_headline --runs "results/v2/main_ext/*.json" \
+      --fit results/v2/recursion_fit_v2.json --out results/v2/figures/fig_headline_v2.pdf
+  Compile paper/extended_abstract/main.tex with pdflatex + bibtex (or Overleaf).
 
 ------------------------------------------------------------------
 Hyper-parameter selection (train / validation / test)
