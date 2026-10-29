@@ -16,27 +16,178 @@ extended abstract (paper/extended_abstract/NLP_Proj_1_draft.pdf) reports that:
     failed, and when collapse runs away the circuit breaks once the share of
     correct labels in the training pool falls to chance.
 
-------------------------------------------------------------------
-Setup
-------------------------------------------------------------------
-Needs Python 3.12 or 3.13 (numpy 2.5 requires >= 3.12). CPU is enough.
-python3.12 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python -m experiments.smoke_test     # ~2 min: every experiment type runs once
-Run every command from the repository ROOT (so `import src...` resolves).
+Contents
+  1. What is in this folder
+  2. How to run the code (six steps, from a 2-minute check to the full study)
+  3. Detailed notes (design decisions, the earlier sweep, every command)
+
+==================================================================
+1. WHAT IS IN THIS FOLDER
+==================================================================
+README.txt         this file
+requirements.txt   the three pinned packages (PyTorch, NumPy, Matplotlib)
+
+src/               the model and the pipeline (library code, used by the scripts)
+  config.py          every hyper-parameter, the token scheme, sequence lengths
+  data.py            the in-context symbol task (base and extended versions)
+  model.py           the 2-layer attention-only transformer
+  train.py           the training loop for one generation
+  collapse.py        the collapse pipeline: real/synthetic mixing, the
+                     convergence gate, and every intervention in the paper
+  probes.py          circuit probes (attention scores) and head ablations
+  metrics.py         accuracy, NLL, diversity and off-context mass
+
+experiments/       every runnable script, run as  python -m experiments.<name>
+  smoke_test.py        2-minute check that every experiment type runs
+  run_single.py        train ONE model and identify its induction circuit
+  analyze_single.py    the same, plus training curves, attention maps, embeddings
+  run_collapse.py      the collapse pipeline for any setting you choose
+  jobs_v2.py           the list of all 311 runs in the paper (run by run_v2.sh)
+  analyse_v2.py        analysis of those runs, incl. the pre-registered tests
+  fit_recursion.py     fits the inheritance law m_{g+1} = a(1 - lambda) m_g + eps
+  abstract_numbers.py  writes every number quoted in the extended abstract
+  plot_headline.py     draws Figure 1 of the extended abstract
+  (the other scripts belong to the earlier sweep, tuning and circuit checks;
+   see section 3)
+
+results/
+  v2/                the 311 runs reported in the paper, one JSON per run:
+                       main_ext, main_base   main sweep (extended and base model)
+                       temp_T0.7/1.3/1.6     pre-registered temperature test
+                       scrub_*, accumulate,  interventions (scrubbing, accumulating
+                       pool5k, pool80k,        pools, pool size, label-noise pulse)
+                       pulse_*
+                       arch_*, task_*        depth, width, MLP and task size
+                       fulllm_*              every token supervised
+  v2/analysis/       analysis outputs; abstract_numbers.json = every number in
+                     the extended abstract
+  v2/figures/        Figure 1 (fig_headline_v2) and the other v2 figures
+  sweep/, figures/, check/, tuning_*.json    earlier sweep, circuit and
+                     convergence checks, hyper-parameter tuning
+
+paper/
+  extended_abstract/ LaTeX source of the abstract (main.tex), the NeurIPS
+                     checklist, Figure 1 and the compiled PDF
+  PREDICTION.md      the pre-registered prediction, committed before its runs
+run_v2.sh          one-command runner for re-running all 311 runs (step 6)
+
+==================================================================
+2. HOW TO RUN THE CODE
+==================================================================
+Run every command from THIS folder (the one that contains README.txt), so
+that `import src...` resolves. A CPU is enough; no GPU is needed. Times are
+for a recent laptop.
 
 ------------------------------------------------------------------
-Quick start: reproduce the extended abstract from the committed runs
+Step 1. Set up (once, about 5 minutes)
 ------------------------------------------------------------------
-No retraining needed; this reads the raw outputs of all 311 runs in results/v2.
+Needs Python 3.12 or 3.13 (numpy 2.5 requires >= 3.12).
+  python3.12 -m venv .venv
+  source .venv/bin/activate          (Windows: .venv\Scripts\activate)
+  pip install -r requirements.txt
+
+------------------------------------------------------------------
+Step 2. Check that everything runs (about 2 minutes)
+------------------------------------------------------------------
+  python -m experiments.smoke_test
+Runs each of the 23 experiment types for a few steps and should end with
+"23/23 job types ran". It tests the plumbing only: the printed metrics are
+meaningless at so few steps.
+
+------------------------------------------------------------------
+Step 3. Reproduce every number and Figure 1 of the paper (seconds)
+------------------------------------------------------------------
+No training: these read the saved outputs of all 311 runs in results/v2.
   python -m experiments.analyse_v2 all
   python -m experiments.fit_recursion --files "results/v2/main_ext/*.json" \
       --out results/v2/recursion_fit_v2.json
-  python -m experiments.abstract_numbers   # every number in the abstract
+  python -m experiments.abstract_numbers
   python -m experiments.plot_headline --runs "results/v2/main_ext/*.json" \
       --fit results/v2/recursion_fit_v2.json --out results/v2/figures/fig_headline_v2.png
-The sections below document every experiment, from a single generation to
-the full queue of 311 runs.
+Outputs:
+  results/v2/analysis/abstract_numbers.json   every number in the abstract
+  results/v2/figures/fig_headline_v2.png      Figure 1
+  results/v2/analysis/temperature.json        the five pre-registered tests
+
+------------------------------------------------------------------
+Step 4. Train one model and see its induction circuit (about 2 minutes)
+------------------------------------------------------------------
+  python -m experiments.run_single --mode base
+Trains one model on the task and prints its accuracy and which heads became
+the previous-token head (layer 0) and the induction head (layer 1).
+  python -m experiments.analyze_single --mode base
+The same, and saves training curves, attention maps and embedding plots to
+results/single_base/. For the extended task add  --mode extended --steps 6000.
+
+------------------------------------------------------------------
+Step 5. Run your own collapse experiment (about 3 minutes)
+------------------------------------------------------------------
+A small version of the paper's main sweep: 3 generations, with no real data
+(lambda = 0) and with only real data (lambda = 1), one seed, base model:
+  python -m experiments.run_collapse --mode base --gen_queries all --gen0_pool \
+      --gate 0.98 --gate_causal 0.5 --fractions 0.0 1.0 --seeds 0 \
+      --generations 3 --steps 2000 --out results/my_collapse_base.json
+Each generation prints one line, e.g.
+  gen  2 | acc_all 1.000 | nll 0.0018 | ind_best 0.966 (canon) | causalL1 0.945/0.847m | labels_ok 0.999 | retries 0
+  acc_all    accuracy on fresh real test data
+  nll        query NLL on real data (rises without real data even when
+             accuracy does not)
+  ind_best   attention score of the best induction head, and which circuit
+             variant it uses (canonical or shifted)
+  causalL1   accuracy lost when every layer-1 head is ablated (zero / mean);
+             a large drop means the circuit is doing the work
+  labels_ok  share of correct labels in the training pool
+  retries    times the generation was retrained because it failed the gate
+
+The extended model (which also generates a free symbol, the part that
+collapses) needs 6000 steps per generation, so this takes about 10 minutes:
+  python -m experiments.run_collapse --mode extended --gen_queries all --gen0_pool \
+      --gate 0.98 --gate_causal 0.5 --fractions 0.0 1.0 --seeds 0 \
+      --generations 3 --steps 6000 --out results/my_collapse_ext.json
+Extended runs print three more values per generation:
+  condH      diversity of the free symbol given the context (1 = uniform)
+  slotH      diversity of which study slot the free symbol copies
+  off        off-context mass: probability on symbols NOT in the context, the
+             hallucination measure the inheritance law describes
+Plot the trajectories of your runs (figures go to results/my_figures/):
+  python -m experiments.plot_collapse --extended results/my_collapse_ext.json \
+      --base results/my_collapse_base.json --out results/my_figures
+
+Options you can change (these four flags above are the paper's settings:
+--gen_queries all --gen0_pool --gate 0.98 --gate_causal 0.5):
+  --fractions 0.0 0.25 1.0   real-data fractions lambda to compare
+  --steps 4000               training steps per generation (the paper used 4000
+                             for the base model and 6000 for the extended one;
+                             the quick example above uses 2000 to save time)
+  --generations 12           generations per run (the paper used 12, 20 at lambda=0)
+  --seeds 0 1 2              independent runs per fraction
+  --temperature 1.3          sampling temperature for the synthetic data
+  --accumulate               keep all earlier pools instead of replacing them
+  --scrub offctx             drop synthetic samples with an off-context symbol
+  --pulse_gen 3 --pulse_label_noise 0.05   one-off label-noise pulse at gen 3
+  --n_layers 3, --d_model 128, --use_mlp   change the architecture
+The full list is in experiments/run_collapse.py; experiments/jobs_v2.py has
+the exact settings of every run in the paper.
+
+------------------------------------------------------------------
+Step 6. Re-run every experiment in the paper (about 30-40 hours)
+------------------------------------------------------------------
+  ./run_v2.sh setup     environment, pinned packages and the smoke test
+  ./run_v2.sh bench     measured run time for this machine
+  ./run_v2.sh start     all 311 runs in the background (re-running resumes)
+  ./run_v2.sh status    progress and time remaining
+  ./run_v2.sh stop      stop (finished runs are kept)
+About 3400 extended-generation units, 30-40 hours on a 10-core Mac. Then run
+step 3 again. Two further analyses need the saved model weights, which only
+a full re-run produces (they are not stored here): experiments/lineage.py
+and experiments/attribution.py (commands in section 3).
+
+==================================================================
+3. DETAILED NOTES
+==================================================================
+Everything below documents the project in the order it was built: the first
+single-generation checks, the earlier sweep, the design findings, and every
+command used for the paper.
 
 ------------------------------------------------------------------
 Milestone 1 — verify an induction head forms
