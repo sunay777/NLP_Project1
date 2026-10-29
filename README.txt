@@ -1,24 +1,42 @@
 NLP Project 1 — Interpretability of Model Collapse
 ==================================================
 
-A small transformer learns the Singh et al. (2024) in-context-learning symbol
-task via an induction head, and is then placed in a model-collapse pipeline.
-Two research angles are built in:
+A two-layer attention-only transformer learns the in-context symbol task of
+Singh et al. (2024) through an induction circuit, and is then retrained for up
+to 20 generations on pools that mix a fraction lambda of real data with data
+sampled from its predecessor (base and extended versions of the task). The
+extended abstract (paper/extended_abstract/NLP_Proj_1_draft.pdf) reports that:
 
-  (A) Induction head as a probe on collapse: track its copy-fidelity (induction
-      attention strength) every generation.
-  (C) Dose-response: sweep the fraction of REAL data mixed into each generation
-      and look for a critical fraction at which the circuit / diversity breaks.
-
-The target headline figure overlays the diversity-collapse curve and the
-induction-strength curve across the real_fraction sweep.
+  * the induction circuit survives bounded collapse: test accuracy and the
+    causal effect of ablating layer 1 hold in every generation of the main sweep;
+  * what collapses is the free generative choice: the probability placed on
+    symbols absent from the context follows an inheritance law
+    m_{g+1} = a (1 - lambda) m_g + eps, carried by the off-context samples;
+  * a pre-registered extension of the law to other sampling temperatures
+    failed, and when collapse runs away the circuit breaks once the share of
+    correct labels in the training pool falls to chance.
 
 ------------------------------------------------------------------
 Setup
 ------------------------------------------------------------------
-python -m venv .venv && source .venv/bin/activate      (optional)
+Needs Python 3.12 or 3.13 (numpy 2.5 requires >= 3.12). CPU is enough.
+python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+python -m experiments.smoke_test     # ~2 min: every experiment type runs once
 Run every command from the repository ROOT (so `import src...` resolves).
+
+------------------------------------------------------------------
+Quick start: reproduce the extended abstract from the committed runs
+------------------------------------------------------------------
+No retraining needed; this reads the raw outputs of all 311 runs in results/v2.
+  python -m experiments.analyse_v2 all
+  python -m experiments.fit_recursion --files "results/v2/main_ext/*.json" \
+      --out results/v2/recursion_fit_v2.json
+  python -m experiments.abstract_numbers   # every number in the abstract
+  python -m experiments.plot_headline --runs "results/v2/main_ext/*.json" \
+      --fit results/v2/recursion_fit_v2.json --out results/v2/figures/fig_headline_v2.png
+The sections below document every experiment, from a single generation to
+the full queue of 311 runs.
 
 ------------------------------------------------------------------
 Milestone 1 — verify an induction head forms

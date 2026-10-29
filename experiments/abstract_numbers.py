@@ -115,7 +115,9 @@ def main():
         "query_acc_all": ms([x["query_acc_all"] for x in first_all]),
         "prev_token_score": ms([x["circuit"]["prev_token_best"] for x in first_all]),
         "induction_score": ms([x["circuit"]["induction_best"] for x in first_all]),
+        "off_context": ms([x["cond_diversity"]["off_context"] for x in first_all]),
     }
+    out["full_lm_gen0_causal_L1_mean"] = {c: sx[c]["causal_L1_mean_l0"]["mean"][0] for c in sx}
 
     base = runs("main_base")
     b0 = [r["records"] for r in base if r["rf"] == 0.0]
@@ -148,6 +150,23 @@ def main():
 
     pred = json.load(open("paper/PREDICTION.json"))["temperatures"]
     out["prereg_calibration"] = {T: {"a": v["a"], "lambda_star": v["lambda_star"]} for T, v in pred.items()}
+
+    from experiments.analyse_v2 import law_fit, runs_of
+    def gain_ci(rs, fracs):
+        return law_fit(rs, train_fracs=fracs, test_fracs=[])["bootstrap"]["a_ci95"]
+    def pool_runs(name):
+        rs = [r for r in runs_of(name) if r["real_fraction"] in (0.0, 1.0)]
+        if name == "main_ext":
+            rs = [dict(r, records=r["records"][:10]) for r in rs if r["seed"] < 5]
+        return rs
+    out["intervention_a_ci95"] = {
+        "offctx_removed": gain_ci(runs_of("scrub_offctx"), [0.0]),
+        "wrong_labels_removed": gain_ci(runs_of("scrub_labels"), [0.0]),
+        "accumulate": gain_ci(runs_of("accumulate"), [0.0, 0.25]),
+        "pool5k": gain_ci(pool_runs("pool5k"), [0.0, 1.0]),
+        "main_ext_matched": gain_ci(pool_runs("main_ext"), [0.0, 1.0]),
+        "pool80k": gain_ci(pool_runs("pool80k"), [0.0, 1.0]),
+    }
 
     out["poolsize_off_context_lambda0_final"] = {
         name: ms([r["records"][-1]["cond_diversity"]["off_context"] for r in runs(name) if r["rf"] == 0.0])

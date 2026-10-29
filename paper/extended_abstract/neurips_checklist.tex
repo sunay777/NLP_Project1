@@ -18,7 +18,7 @@
 \item {\bf Limitations}
     \item[] Question: Does the paper discuss the limitations of the work performed by the authors?
     \item[] Answer: \answerYes{}
-    \item[] Justification: The Discussion states that the circuit result holds only with real prompts and answer-only supervision (it degrades under full language-model training), and lists the 35k-parameter model, 16 symbols, 5--10 seeds and at most 20 generations. Results report where the inheritance law fails: it overshoots the $\lambda{=}0$ plateau and failed its pre-registered extension to other temperatures. The 2-page limit leaves no room for a separate Limitations section.
+    \item[] Justification: The Discussion states that the circuit result holds only with real prompts and answer-only supervision (it degrades under full language-model training), and lists the 35k-parameter model, 16 symbols, 5--10 seeds and at most 20 generations. Results report where the inheritance law fails: it overshoots the $\lambda{=}0$ plateau and failed its pre-registered extension to other temperatures.
     \item[] Guidelines:
     \begin{itemize}
         \item The answer NA means that the paper has no limitation while the answer No means that the paper has limitations, but those are not discussed in the paper.
@@ -96,7 +96,7 @@
 \item {\bf Experiment Statistical Significance}
     \item[] Question: Does the paper report error bars suitably and correctly defined or other appropriate information about the statistical significance of the experiments?
     \item[] Answer: \answerYes{}
-    \item[] Justification: Figure~1 shows mean $\pm$ one standard deviation over 10 seeds (stated in the caption); seeds change the initialisation, the real data and the sampling. The law's gain comes with a 95\% bootstrap CI (1000 resamples of whole seed trajectories within each $\lambda$), and the held-out test reports RMSE and the share of generations within one seed SD. Two gaps: the intervention gains (scrubbing, accumulation, pool size, architecture and task size) are point estimates without CIs, and the symmetric SD bars in Figure~1b are clipped where they would go below zero on the log axis.
+    \item[] Justification: Figure~1 shows mean $\pm$ one standard deviation over 10 seeds (stated in the caption); seeds change the initialisation, the real data and the sampling. The law's gain comes with a 95\% bootstrap CI (1000 resamples of whole seed trajectories within each $\lambda$), and the held-out test reports RMSE and the share of generations within one seed SD. The scrubbing, accumulation and pool-size gains have 95\% bootstrap CIs computed the same way. Two gaps: the architecture and task-size gains are point estimates without CIs, and the symmetric SD bars in Figure~1b are clipped where they would go below zero on the log axis.
     \item[] Guidelines:
     \begin{itemize}
         \item The answer NA means that the paper does not include experiments.
@@ -113,7 +113,7 @@
 \item {\bf Experiments Compute Resources}
     \item[] Question: For each experiment, does the paper provide sufficient information on the computer resources (type of compute workers, memory, time of execution) needed to reproduce the experiments?
     \item[] Answer: \answerYes{}
-    \item[] Justification: Given here, as the 2-page body has no room. All runs used CPUs only, one thread per run, on two Apple-silicon Macs; no GPU or cluster. With 9 runs in parallel, one extended generation took about 5 minutes per core. The 311 runs trained 3,293 generations (plus retries), about 330 CPU core-hours in total. Matthew's share (200 runs) took about 17 hours of wall time on 9 parallel workers; Sunay's share (111 runs, including the larger models) took about 26 hours on 9 workers over two sessions, about 5 hours of which were 4-layer runs repeated after a fix to the convergence gate. Earlier work not in the paper (a first sweep, hyper-parameter tuning, pilots and the temperature calibration) used additional compute.
+    \item[] Justification: All runs used CPUs only, one thread per run, on two Apple-silicon Macs; no GPU or cluster. With 9 runs in parallel, one extended generation took about 5 minutes per core. The 311 runs trained 3,293 generations (plus retries), about 330 CPU core-hours in total. Matthew's share (200 runs) took about 17 hours of wall time on 9 parallel workers; Sunay's share (111 runs, including the larger models) took about 26 hours on 9 workers over two sessions, about 5 hours of which were 4-layer runs repeated after a fix to the convergence gate. Earlier work not in the paper (a first sweep, hyper-parameter tuning, pilots and the temperature calibration) used additional compute.
     \item[] Guidelines:
     \begin{itemize}
         \item The answer NA means that the paper does not include experiments.
@@ -137,7 +137,7 @@
 \item {\bf Broader Impacts}
     \item[] Question: Does the paper discuss both potential positive societal impacts and negative societal impacts of the work performed?
     \item[] Answer: \answerNo{}
-    \item[] Justification: The 2-page abstract has no room for this, so we give it here. This is foundational work on a toy task with no direct application. On the positive side, it supports keeping real data in training mixtures and monitoring confidence as well as accuracy, since models are increasingly trained on web data that contains model output. On the negative side, the label-noise pulse shows that injected errors persist far longer without real data, which is relevant to data poisoning; at this scale it gives an attacker nothing new.
+    \item[] Justification: The abstract does not discuss societal impact, so we summarise it here. This is foundational work on a toy task with no direct application. On the positive side, it supports keeping real data in training mixtures and monitoring confidence as well as accuracy, since models are increasingly trained on web data that contains model output. On the negative side, the label-noise pulse shows that injected errors persist far longer without real data, which is relevant to data poisoning; at this scale it gives an attacker nothing new.
     \item[] Guidelines:
     \begin{itemize}
         \item The answer NA means that there is no societal impact of the work performed.

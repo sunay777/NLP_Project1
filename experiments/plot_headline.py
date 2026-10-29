@@ -8,8 +8,9 @@
       are ablated (mean-ablation when logged, else zero-ablation; for the
       original sweep only the re-probed gen-0 / final models have it);
   (d) conditional diversity of sq2 on a y-range that shows the signal.
-Real fractions use one sequential hue (light -> dark) plus a distinct marker per
-fraction, so lines stay identifiable in greyscale and for colour-blind readers.
+Real fractions use one sequential hue (darkest at lambda=0, the most collapsed) plus a
+distinct marker per fraction, so lines stay identifiable in greyscale and for
+colour-blind readers.
 
 Run:  python -m experiments.plot_headline --runs "results/sweep/extended_all*.json" \
           --fit results/v2/recursion_fit.json \
@@ -44,8 +45,8 @@ def style():
     })
 
 
-def colour(f, fracs):
-    ref = sorted(fracs)
+def colour(f, fracs, dark_first=False):
+    ref = sorted(fracs, reverse=dark_first)
     if len(ref) <= len(BLUES):
         return BLUES[len(BLUES) - len(ref) + ref.index(f)]
     return plt.cm.Blues(0.35 + 0.6 * ref.index(f) / (len(ref) - 1))
@@ -92,7 +93,7 @@ def main():
     fig, ax = plt.subplots(1, 4, figsize=(7.0, 2.45))
     # (a) off-context mass + law
     for i, f in enumerate(fracs):
-        c, mk = colour(f, fracs), MARKERS[i]
+        c, mk = colour(f, fracs, dark_first=True), MARKERS[i]
         arr = series(runs, f, lambda r: r["cond_diversity"]["off_context"])
         g = np.arange(arr.shape[1])
         points(ax[0], g, arr, c, mk, label=f"{f:g}", line=False)
@@ -107,7 +108,7 @@ def main():
     # (b) query NLL, log y
     for i, f in enumerate(fracs):
         arr = series(runs, f, lambda r: r.get("query_nll_all", np.log(r["query_ppl"])))
-        points(ax[1], np.arange(arr.shape[1]), arr, colour(f, fracs), MARKERS[i])
+        points(ax[1], np.arange(arr.shape[1]), arr, colour(f, fracs, dark_first=True), MARKERS[i])
     ax[1].set_yscale("log")
     ax[1].set_ylabel("NLL (log scale)")
     accs = [rec["query_acc_all"] for r in runs for rec in r["records"]]
@@ -122,7 +123,7 @@ def main():
     if key:
         for i, f in enumerate(fracs):
             arr = series(runs, f, lambda r: r["circuit"][key])
-            points(ax[2], np.arange(arr.shape[1]), arr, colour(f, fracs), MARKERS[i])
+            points(ax[2], np.arange(arr.shape[1]), arr, colour(f, fracs, dark_first=True), MARKERS[i])
         ax[2].set_title("(c) Ablate all L1 heads")
     elif a.reprobe:
         rows = list(csv.DictReader(open(a.reprobe)))
@@ -133,7 +134,7 @@ def main():
             x = np.array(gens) + (i - len(fracs) / 2) * 0.12
             m = [np.mean(v) for v in vals]
             s = [np.std(v) for v in vals]
-            ax[2].errorbar(x, m, yerr=s, fmt=MARKERS[i], color=colour(f, fracs), ms=3.2,
+            ax[2].errorbar(x, m, yerr=s, fmt=MARKERS[i], color=colour(f, fracs, dark_first=True), ms=3.2,
                            elinewidth=0.6, markeredgecolor="white", markeredgewidth=0.4)
         ax[2].set_xticks(gens)
         ax[2].set_title("(c) Ablate all L1 heads")
@@ -144,7 +145,7 @@ def main():
     lo = 1.0
     for i, f in enumerate(fracs):
         arr = series(runs, f, lambda r: r["cond_diversity"]["cond_entropy"])
-        points(ax[3], np.arange(arr.shape[1]), arr, colour(f, fracs), MARKERS[i])
+        points(ax[3], np.arange(arr.shape[1]), arr, colour(f, fracs, dark_first=True), MARKERS[i])
         lo = min(lo, float(np.nanmin(np.nanmean(arr, 0) - np.nanstd(arr, 0))))
     ax[3].set_ylim(max(0.0, lo - 0.02), 1.005)
     ax[3].set_title("(d) Cond. diversity")
@@ -153,7 +154,7 @@ def main():
     for x in ax:
         x.set_xlabel("generation")
     from matplotlib.lines import Line2D
-    h = [Line2D([], [], color=colour(f, fracs), marker=MARKERS[i], ms=3.5, lw=1.0,
+    h = [Line2D([], [], color=colour(f, fracs, dark_first=True), marker=MARKERS[i], ms=3.5, lw=1.0,
                 markeredgecolor="white", markeredgewidth=0.4) for i, f in enumerate(fracs)]
     h += [Line2D([], [], color=INK2, lw=1.0), Line2D([], [], color=INK2, lw=1.0, ls="--")]
     l = [f"{f:g}" for f in fracs] + ["law (fitted)", "law (held-out)"]
