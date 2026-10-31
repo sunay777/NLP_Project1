@@ -5,7 +5,9 @@ A two-layer attention-only transformer learns the in-context symbol task of
 Singh et al. (2024) through an induction circuit, and is then retrained for up
 to 20 generations on pools that mix a fraction lambda of real data with data
 sampled from its predecessor (base and extended versions of the task). The
-extended abstract (paper/extended_abstract/NLP_Proj_1_draft.pdf) reports that:
+extended abstract (NLP_Project1_Extended_Abstract.pdf in the submitted zip;
+paper/extended_abstract/NLP_Proj_1_draft.pdf in the GitHub repository)
+reports that:
 
   * the induction circuit survives bounded collapse: test accuracy and the
     causal effect of ablating layer 1 hold in every generation of the main sweep;
@@ -24,6 +26,15 @@ Contents
 ==================================================================
 1. WHAT IS IN THIS FOLDER
 ==================================================================
+The submitted zip has four items at the top:
+  NLP_Project1_Extended_Abstract.pdf   the extended abstract
+  README.txt                           this file
+  requirements.txt                     the packages
+  code/                                the full code
+code/ is laid out exactly like the GitHub repository (it has its own copy of
+README.txt and requirements.txt), so every path below is relative to code/.
+
+Inside code/ (the GitHub repository):
 README.txt         this file
 requirements.txt   the three pinned packages (PyTorch, NumPy, Matplotlib)
 
@@ -74,9 +85,10 @@ run_v2.sh          one-command runner for re-running all 311 runs (step 6)
 ==================================================================
 2. HOW TO RUN THE CODE
 ==================================================================
-Run every command from THIS folder (the one that contains README.txt), so
-that `import src...` resolves. A CPU is enough; no GPU is needed. Times are
-for a recent laptop.
+Run every command from the code folder: code/ in the submitted zip (run
+`cd code` first), or the top level of the GitHub repository. That folder
+contains src/ and experiments/, so `import src...` resolves. A CPU is
+enough; no GPU is needed. Times are for a recent laptop.
 
 ------------------------------------------------------------------
 Step 1. Set up (once, about 5 minutes)
